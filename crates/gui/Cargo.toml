@@ -1,0 +1,14 @@
+[package]
+name = "supersprinter-gui"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "supersprinter-gui"
+path = "src/main.rs"
+
+[dependencies]
+core = { workspace = true }
+clap = { workspace = true }
+gpui = { workspace = true }
+anyhow = { workspace = true }

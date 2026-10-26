@@ -1,0 +1,16 @@
+[package]
+name = "supersprinter-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "supersprinter-cli"
+path = "src/main.rs"
+
+[dependencies]
+core = { workspace = true }
+render = { workspace = true }
+clap = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+anyhow = { workspace = true }

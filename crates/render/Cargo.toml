@@ -1,0 +1,11 @@
+[package]
+name = "supersprinter-render"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { workspace = true }
+image = { workspace = true }
+ab_glyph = { workspace = true }
+ffmpeg-next = { workspace = true }
+anyhow = { workspace = true }
