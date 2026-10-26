@@ -477,7 +477,7 @@ impl Render for LauncherView {
             .text_color(rgb_bytes(theme.text));
 
         if let Some(tiling) = tiling {
-            root = root.child(title_bar("launcher-titlebar", theme, "Supersprinter".into(), |w, cx| close_window(w, cx)));
+            root = root.child(title_bar("launcher-titlebar", theme, "Supersprinter".into(), close_window));
             for strip in resize_strips(tiling) {
                 root = root.child(strip);
             }
@@ -760,7 +760,7 @@ impl Render for ReaderView {
                     let mut font_size = (bounds.size.height * 0.16).clamp(px(16.), px(140.));
                     let mut line = shape(font_size);
                     while line.width > max_w && font_size > px(16.) {
-                        font_size = font_size * 0.92;
+                        font_size *= 0.92;
                         line = shape(font_size);
                     }
                     let line_height = font_size * 1.25;
@@ -938,19 +938,16 @@ fn main() {
     let wpm = cli.wpm.unwrap_or(300);
     // With a file argument, go straight to the reader; otherwise open the
     // launcher window.
-    let direct = match &cli.file {
-        Some(path) => Some((
-            path.clone(),
-            match load_book(path) {
-                Ok(text) => build_frames(&text),
-                Err(e) => {
-                    eprintln!("error: {e:#}");
-                    std::process::exit(1);
-                }
-            },
-        )),
-        None => None,
-    };
+    let direct = cli.file.map(|path| {
+        let frames = match load_book(&path) {
+            Ok(text) => build_frames(&text),
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                std::process::exit(1);
+            }
+        };
+        (path, frames)
+    });
 
     Application::new().run(move |cx: &mut App| {
         cx.set_global(TitleDrag(false));

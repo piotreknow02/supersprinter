@@ -1,6 +1,6 @@
 //! Terminal RSVP reader + mp4 render subcommand.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -130,7 +130,7 @@ fn draw(
     );
 }
 
-fn read_terminal(path: &PathBuf, mut wpm: u32, theme: &Theme) -> Result<()> {
+fn read_terminal(path: &Path, mut wpm: u32, theme: &Theme) -> Result<()> {
     let text = load_book(path)?;
     let frames = build_frames(&text);
     if frames.is_empty() {

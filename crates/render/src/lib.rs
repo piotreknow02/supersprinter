@@ -60,41 +60,29 @@ fn draw_frame(img: &mut RgbaImage, frame: &Frame, font: &FontArc, theme: &Theme)
     let cw = sf.h_advance(font.glyph_id(' '));
     let ascent = sf.ascent();
     let descent = sf.descent();
+
     // Word x-origin so the pivot glyph straddles the horizontal center.
     let origin_x = WIDTH as f32 / 2.0 - (frame.pivot as f32 + 0.5) * cw;
+    // Fixed baseline so nothing shifts between frames. ab_glyph's descent is
+    // NEGATIVE (below baseline); the ascent..descent box is centered on the
+    // midline, so descenders always fit inside the band.
+    let baseline_y = HEIGHT as f32 / 2.0 + (ascent + descent) / 2.0;
 
     let text = Rgba([theme.text[0], theme.text[1], theme.text[2], 255]);
     let pivot_color = Rgba([theme.pivot[0], theme.pivot[1], theme.pivot[2], 255]);
 
-    // Pass 1: outline every glyph at baseline 0 and record its pixel box
-    // (bounds shift linearly with the baseline). Pass 2 draws with the
-    // baseline chosen so the word's actual INK is vertically centered —
-    // font ascent/descent include descender space most words never use.
-    let mut glyphs = Vec::with_capacity(word.len());
-    let mut ink_top = f32::MAX;
-    let mut ink_bottom = f32::MIN;
     for (i, ch) in word.chars().enumerate() {
         let color = if i == frame.pivot { pivot_color } else { text };
         let x = origin_x + i as f32 * cw;
         let Some(glyph) = font.outline_glyph(
             font.glyph_id(ch)
-                .with_scale_and_position(scale, ab_glyph::point(x, 0.0)),
+                .with_scale_and_position(scale, ab_glyph::point(x, baseline_y)),
         ) else {
             continue;
         };
-        let rect = glyph.px_bounds();
-        ink_top = ink_top.min(rect.min.y);
-        ink_bottom = ink_bottom.max(rect.max.y);
-        glyphs.push((glyph, rect, color));
-    }
-    if glyphs.is_empty() {
-        return;
-    }
-    let baseline_y = HEIGHT as f32 / 2.0 - (ink_top + ink_bottom) / 2.0;
-
-    for (glyph, rect, color) in &glyphs {
         // draw() emits coords relative to the glyph's pixel-box top-left.
-        let (left, top) = (rect.min.x, rect.min.y + baseline_y);
+        let rect = glyph.px_bounds();
+        let (left, top) = (rect.min.x, rect.min.y);
         glyph.draw(|gx, gy, coverage| {
             let px = (left + gx as f32) as i64;
             let py = (top + gy as f32) as i64;
@@ -102,21 +90,20 @@ fn draw_frame(img: &mut RgbaImage, frame: &Frame, font: &FontArc, theme: &Theme)
                 && (0..HEIGHT as i64).contains(&py)
                 && coverage > 0.0
             {
-                blend(img.get_pixel_mut(px as u32, py as u32), *color, coverage);
+                blend(img.get_pixel_mut(px as u32, py as u32), color, coverage);
             }
         });
     }
-
     // Arrows: pivot glyph center is always at WIDTH/2 by construction.
     let arrows = Rgba([theme.arrows[0], theme.arrows[1], theme.arrows[2], 255]);
     let cx = WIDTH / 2;
     let tri_h = 18;
     let tri_w = 14;
     let gap = 10;
-    // Ink extent in screen coordinates (pass-1 bounds were at baseline 0).
-    let (ink_top, ink_bottom) = (ink_top + baseline_y, ink_bottom + baseline_y);
+    // Fixed positions relative to the font-metric text band (same visual
+    // relationship as the GUI/CLI markers), identical for every frame.
     // Above the text, pointing down (apex at bottom).
-    let apex_top = (ink_top - gap as f32).max(tri_h as f32) as u32;
+    let apex_top = (baseline_y - ascent - gap as f32).max(0.) as u32;
     for dy in 0..tri_h {
         let y = apex_top - dy;
         let half = ((tri_w as u32) * dy / tri_h).max(1) as i64;
@@ -128,7 +115,7 @@ fn draw_frame(img: &mut RgbaImage, frame: &Frame, font: &FontArc, theme: &Theme)
         }
     }
     // Below the text, pointing up (apex at top).
-    let apex_bot = (ink_bottom + gap as f32).min((HEIGHT - tri_h as u32 - 1) as f32) as u32;
+    let apex_bot = (baseline_y - descent + gap as f32).min((HEIGHT - tri_h - 1) as f32) as u32;
     for dy in 0..tri_h {
         let y = apex_bot + dy;
         let half = ((tri_w as u32) * dy / tri_h).max(1) as i64;
