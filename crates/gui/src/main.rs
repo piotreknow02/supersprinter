@@ -428,7 +428,7 @@ impl LauncherView {
                 let opts = win_options(title.clone(), 900., 500., cx);
                 let opened = cx.open_window(opts, move |window, cx| {
                     let view =
-                        cx.new(|cx| ReaderView::new(frames, theme, wpm, title, cx));
+                        cx.new(|cx| ReaderView::new(frames, path.clone(), theme, wpm, title, cx));
                     view.focus_handle(cx).focus(window);
                     view
                 });
@@ -564,12 +564,16 @@ impl Render for LauncherView {
 
 struct ReaderView {
     frames: Vec<Frame>,
+    source: PathBuf,
     idx: usize,
     playing: bool,
     wpm: u32,
     theme: Theme,
     title: String,
     task: Task<()>,
+    export: Task<()>,
+    exporting: bool,
+    export_msg: Option<String>,
     root_focus: FocusHandle,
     input_focus: FocusHandle,
     wpm_buf: String,
@@ -578,6 +582,7 @@ struct ReaderView {
 impl ReaderView {
     fn new(
         frames: Vec<Frame>,
+        source: PathBuf,
         theme: Theme,
         wpm: u32,
         title: String,
@@ -585,12 +590,16 @@ impl ReaderView {
     ) -> Self {
         let mut this = ReaderView {
             frames,
+            source,
             idx: 0,
             playing: true,
             wpm: wpm.max(1),
             theme,
             title,
             task: Task::ready(()),
+            export: Task::ready(()),
+            exporting: false,
+            export_msg: None,
             root_focus: cx.focus_handle(),
             input_focus: cx.focus_handle(),
             wpm_buf: String::new(),
@@ -652,6 +661,58 @@ impl ReaderView {
         self.wpm = wpm.clamp(1, 4000);
         self.restart_task(cx);
         cx.notify();
+    }
+
+    /// Opens a save dialog and renders the current book to mp4 at the
+    /// chosen path, encoding on a background thread so the UI stays live.
+    fn export_mp4(&mut self, cx: &mut Context<Self>) {
+        if self.exporting {
+            return;
+        }
+        self.export_msg = None;
+        let dir = self
+            .source
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let stem = self
+            .source
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "book".into());
+        let rx = cx.prompt_for_new_path(&dir, Some(&format!("{stem}.mp4")));
+        let source = self.source.clone();
+        let wpm = self.wpm;
+        let theme = self.theme;
+        self.export = cx.spawn(async move |this, cx| {
+            let dest = match rx.await.ok().and_then(|r| r.ok()).flatten() {
+                Some(p) => p,
+                None => return,
+            };
+            let _ = this.update(cx, |v, cx| {
+                v.exporting = true;
+                v.export_msg = Some("exporting…".into());
+                cx.notify();
+            });
+            let result = cx
+                .background_spawn(async move {
+                    let result = std::fs::read_to_string(&source)
+                        .map_err(Into::into)
+                        .and_then(|text| render::render_video(&text, &dest, wpm, &theme));
+                    (dest, result)
+                })
+                .await;
+            let (dest, result) = result;
+            let msg = match result {
+                Ok(()) => format!("saved {}", dest.display()),
+                Err(e) => format!("export failed: {e:#}"),
+            };
+            let _ = this.update(cx, |v, cx| {
+                v.exporting = false;
+                v.export_msg = Some(msg);
+                cx.notify();
+            });
+        });
     }
 
     fn on_reader_key(&mut self, e: &KeyDownEvent, w: &mut Window, cx: &mut Context<Self>) {
@@ -893,6 +954,27 @@ impl Render for ReaderView {
                     .on_click(cx.listener(|this, _, _w, cx| this.set_playing(!this.playing, cx)))
                     .child(play_label),
             )
+            .child(
+                div()
+                    .id("export-mp4")
+                    .cursor_pointer()
+                    .px_2()
+                    .py_1()
+                    .border_1()
+                    .border_color(rgb_bytes(theme.arrows))
+                    .on_click(cx.listener(|this, _, _w, cx| this.export_mp4(cx)))
+                    .child(if self.exporting {
+                        "⏳ exporting…"
+                    } else {
+                        "⬇ export mp4"
+                    }),
+            )
+            .child(
+                self.export_msg
+                    .as_ref()
+                    .map(|m| div().text_color(rgb_bytes(theme.arrows)).child(m.clone()))
+                    .unwrap_or_else(|| div()),
+            )
             .child(wpm_slider(cx, theme, self.wpm, Self::set_wpm))
             .child(input)
             .child(div().child(wpm_label))
@@ -970,11 +1052,13 @@ fn main() {
                     .unwrap_or_else(|| path.display().to_string());
                 let title = format!("Supersprinter — {stem}");
                 let frames = frames.clone();
+                let source = path.clone();
                 let theme_for_view = theme;
                 let opts = win_options(title.clone(), 900., 500., cx);
                 cx.open_window(opts, move |window, cx| {
-                    let view =
-                        cx.new(|cx| ReaderView::new(frames, theme_for_view, wpm, title, cx));
+                    let view = cx.new(|cx| {
+                        ReaderView::new(frames, source, theme_for_view, wpm, title, cx)
+                    });
                     view.focus_handle(cx).focus(window);
                     view
                 })

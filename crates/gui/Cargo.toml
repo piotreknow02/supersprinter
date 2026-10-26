@@ -12,3 +12,4 @@ core = { workspace = true }
 clap = { workspace = true }
 gpui = { workspace = true }
 anyhow = { workspace = true }
+render = { workspace = true }

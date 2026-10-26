@@ -5928,6 +5928,7 @@ dependencies = [
  "clap",
  "gpui",
  "supersprinter-core",
+ "supersprinter-render",
 ]
 
 [[package]]
