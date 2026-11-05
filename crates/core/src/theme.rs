@@ -26,12 +26,15 @@ impl Default for Theme {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ThemeFile {
-    background: String,
-    text: String,
-    arrows: String,
+struct ThemeFile<'a> {
+    #[serde(borrow)]
+    background: &'a str,
+    #[serde(borrow)]
+    text: &'a str,
+    #[serde(borrow)]
+    arrows: &'a str,
     #[serde(default)]
-    pivot: Option<String>,
+    pivot: Option<&'a str>,
 }
 
 /// Parse `#rrggbb` (case-insensitive) into RGB bytes.

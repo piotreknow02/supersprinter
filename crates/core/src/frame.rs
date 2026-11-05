@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 /// One presentation frame: a word (or a blank pause), the 0-based index of the
 /// pivot (ORP) character, and a duration in ticks (1 tick = 60_000 / wpm ms).
+/// `word` is an `Arc<str>` so cloning a frame is a refcount bump, not a copy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
-    pub word: Option<String>,
+    pub word: Option<Arc<str>>,
     pub pivot: usize,
     pub ticks: u32,
 }
@@ -35,7 +38,7 @@ pub fn build_frames(text: &str) -> Vec<Frame> {
         .map(|word| Frame {
             pivot: pivot_index(word.chars().count()),
             ticks: pacing(word),
-            word: Some(word.to_string()),
+            word: Some(Arc::from(word)),
         })
         .collect()
 }

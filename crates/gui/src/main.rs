@@ -23,9 +23,9 @@ use gpui::{
     App, AppContext, Application, Bounds, Context, CursorStyle, Decorations, FocusHandle,
     Focusable, Global, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, ParentElement, PathBuilder, PathPromptOptions, Pixels, Render, ResizeEdge,
-    StatefulInteractiveElement, Styled, Task, TextRun, Tiling, Timer, TitlebarOptions, Window,
-    WindowBounds, WindowControlArea, WindowDecorations, WindowOptions, canvas, div, font, point,
-    prelude::FluentBuilder, px, rgb, size,
+    StatefulInteractiveElement, Styled, SharedString, Task, TextRun, Tiling, Timer, TitlebarOptions,
+    Window, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions, canvas, div, font,
+    point, prelude::FluentBuilder, px, rgb, size,
 };
 
 use core::{Frame, Theme, build_frames, load_book, load_theme};
@@ -61,7 +61,7 @@ impl Global for TitleDrag {}
 /// "monospace" resolves to nothing and silently falls back to a PROPORTIONAL
 /// font — which is why per-char advance math misaligned the pivot arrows.
 /// Resolved once at startup from `all_font_names()`.
-struct MonoFamily(String);
+struct MonoFamily(SharedString);
 impl Global for MonoFamily {}
 
 const MONO_CANDIDATES: &[&str] = &[
@@ -76,10 +76,10 @@ const MONO_CANDIDATES: &[&str] = &[
     "monospace",
 ];
 
-fn mono_family(cx: &App) -> String {
+fn mono_family(cx: &App) -> SharedString {
     cx.try_global::<MonoFamily>()
         .map(|m| m.0.clone())
-        .unwrap_or_else(|| FONT.to_string())
+        .unwrap_or_else(|| SharedString::new_static(FONT))
 }
 
 /// Close `window`, quitting the app if it is the last window.
@@ -91,7 +91,7 @@ fn close_window(window: &mut Window, cx: &mut App) {
     }
 }
 
-fn win_options(title: String, w: f32, h: f32, cx: &mut App) -> WindowOptions {
+fn win_options(title: SharedString, w: f32, h: f32, cx: &mut App) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
@@ -99,7 +99,7 @@ fn win_options(title: String, w: f32, h: f32, cx: &mut App) -> WindowOptions {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some(title.into()),
+            title: Some(title),
             ..Default::default()
         }),
         window_decorations: Some(WindowDecorations::Client),
@@ -115,7 +115,7 @@ fn win_options(title: String, w: f32, h: f32, cx: &mut App) -> WindowOptions {
 fn title_bar(
     id: &'static str,
     theme: Theme,
-    title: String,
+    title: SharedString,
     on_close: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let border = rgb_bytes(theme.arrows);
@@ -368,7 +368,7 @@ struct LauncherView {
     theme: Theme,
     wpm: u32,
     path: Option<PathBuf>,
-    error: Option<String>,
+    error: Option<SharedString>,
     focus: FocusHandle,
     picker: Task<()>,
 }
@@ -424,7 +424,7 @@ impl LauncherView {
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string());
-                let title = format!("Supersprinter — {stem}");
+                let title: SharedString = format!("Supersprinter — {stem}").into();
                 let opts = win_options(title.clone(), 900., 500., cx);
                 let opened = cx.open_window(opts, move |window, cx| {
                     let view =
@@ -436,8 +436,10 @@ impl LauncherView {
                     self.error = Some("failed to open reader window".into());
                 }
             }
-            Ok(_) => self.error = Some(format!("no words found in {}", path.display())),
-            Err(e) => self.error = Some(format!("{e:#}")),
+            Ok(_) => {
+                self.error = Some(format!("no words found in {}", path.display()).into());
+            }
+            Err(e) => self.error = Some(format!("{e:#}").into()),
         }
         cx.notify();
     }
@@ -569,11 +571,11 @@ struct ReaderView {
     playing: bool,
     wpm: u32,
     theme: Theme,
-    title: String,
+    title: SharedString,
     task: Task<()>,
     export: Task<()>,
     exporting: bool,
-    export_msg: Option<String>,
+    export_msg: Option<SharedString>,
     root_focus: FocusHandle,
     input_focus: FocusHandle,
     wpm_buf: String,
@@ -585,7 +587,7 @@ impl ReaderView {
         source: PathBuf,
         theme: Theme,
         wpm: u32,
-        title: String,
+        title: SharedString,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = ReaderView {
@@ -703,9 +705,9 @@ impl ReaderView {
                 })
                 .await;
             let (dest, result) = result;
-            let msg = match result {
-                Ok(()) => format!("saved {}", dest.display()),
-                Err(e) => format!("export failed: {e:#}"),
+            let msg: SharedString = match result {
+                Ok(()) => format!("saved {}", dest.display()).into(),
+                Err(e) => format!("export failed: {e:#}").into(),
             };
             let _ = this.update(cx, |v, cx| {
                 v.exporting = false;
@@ -770,25 +772,29 @@ impl Render for ReaderView {
             Decorations::Server => None,
         };
         let frame = &self.frames[self.idx];
-        let word: String = frame.word.clone().unwrap_or_default();
-        let chars: Vec<char> = word.chars().collect();
-        let pivot = frame.pivot.min(chars.len().saturating_sub(1));
+        let word: &str = frame.word.as_deref().unwrap_or("");
+        let pivot = frame.pivot.min(word.chars().count().saturating_sub(1));
 
         let text_c: gpui::Hsla = rgb_bytes(theme.text).into();
         let pivot_c: gpui::Hsla = rgb_bytes(theme.pivot).into();
         let arrow_c = rgb_bytes(theme.arrows);
 
-        // Byte lengths of the three color runs (pivot glyph highlighted).
-        let before: String = chars[..pivot].iter().collect();
-        let pivot_s: String = chars.get(pivot).into_iter().collect();
-        let after: String = chars[pivot + 1..].iter().collect();
+        // Byte offsets of the pivot char: the three color runs are pure byte
+        // lengths, so no per-frame String is built.
+        let (pivot_byte, pivot_len, pivot_char) = word
+            .char_indices()
+            .nth(pivot)
+            .map(|(i, c)| (i, c.len_utf8(), Some(c)))
+            .unwrap_or((word.len(), 0, None));
+        let before_len = pivot_byte;
+        let after_len = word.len() - pivot_byte - pivot_len;
 
         let fam = mono_family(cx);
         let reader = {
-            let word_shape = word.clone();
+            // Arc<str> -> SharedString is a refcount bump, not a copy.
+            let word_shape: SharedString =
+                frame.word.clone().map(SharedString::new).unwrap_or_default();
             let font_family = fam.clone();
-            let pivot_byte = before.len();
-            let pivot_char = chars.get(pivot).copied();
             canvas(
                 move |bounds, window, _cx| {
                     if word_shape.is_empty() {
@@ -806,12 +812,12 @@ impl Render for ReaderView {
                     };
                     let shape = |size: Pixels| {
                         ts.shape_line(
-                            word_shape.clone().into(),
+                            word_shape.clone(),
                             size,
                             &[
-                                run(before.len(), text_c),
-                                run(pivot_s.len(), pivot_c),
-                                run(after.len(), text_c),
+                                run(before_len, text_c),
+                                run(pivot_len, pivot_c),
+                                run(after_len, text_c),
                             ],
                             None,
                         )
@@ -1037,10 +1043,10 @@ fn main() {
         let fam = MONO_CANDIDATES
             .iter()
             .find(|c| names.iter().any(|n| n == *c))
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "monospace".to_string());
+            .map(|s| SharedString::new_static(*s))
+            .unwrap_or_else(|| SharedString::new_static("monospace"));
         cx.set_global(MonoFamily(fam));
-        match &direct {
+        match direct {
             Some((path, frames)) => {
                 if frames.is_empty() {
                     eprintln!("error: no words found in {}", path.display());
@@ -1050,14 +1056,12 @@ fn main() {
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string());
-                let title = format!("Supersprinter — {stem}");
-                let frames = frames.clone();
-                let source = path.clone();
+                let title: SharedString = format!("Supersprinter — {stem}").into();
                 let theme_for_view = theme;
                 let opts = win_options(title.clone(), 900., 500., cx);
                 cx.open_window(opts, move |window, cx| {
                     let view = cx.new(|cx| {
-                        ReaderView::new(frames, source, theme_for_view, wpm, title, cx)
+                        ReaderView::new(frames, path, theme_for_view, wpm, title, cx)
                     });
                     view.focus_handle(cx).focus(window);
                     view

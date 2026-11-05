@@ -10,7 +10,7 @@ use ratatui::{
     Frame as TuiFrame,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style, Styled},
-    text::Line,
+    text::{Line, Span},
     widgets::Paragraph,
 };
 
@@ -79,10 +79,8 @@ fn draw(
         ])
         .split(area);
 
-    let (word, pivot) = match &frame.word {
-        Some(w) => (w.as_str(), frame.pivot),
-        None => ("", 0),
-    };
+    let word: &str = frame.word.as_deref().unwrap_or("");
+    let pivot = frame.pivot;
 
     // Pad so the pivot glyph lands on center_col; words too wide start at 0.
     let pad = center_col.saturating_sub(pivot as u16);
@@ -98,17 +96,19 @@ fn draw(
     let word_line = if word.is_empty() {
         Line::from("")
     } else {
-        let chars: Vec<char> = word.chars().collect();
-        let before: String = chars[..pivot.min(chars.len())].iter().collect();
-        let pivot_ch: String = chars.get(pivot).into_iter().collect();
-        let after: String = chars[pivot.saturating_add(1)..].iter().collect();
+        // Byte offsets of the pivot char so the spans borrow the word (zero alloc).
+        let (pb, pl) = word
+            .char_indices()
+            .nth(pivot)
+            .map(|(i, c)| (i, c.len_utf8()))
+            .unwrap_or((word.len(), 0));
         let text = Style::default().fg(to_color(theme.text));
         let pivot_style = Style::default().fg(to_color(theme.pivot)).add_modifier(Modifier::BOLD);
         Line::from(vec![
             " ".repeat(pad as usize).into(),
-            before.set_style(text),
-            pivot_ch.set_style(pivot_style),
-            after.set_style(text),
+            Span::from(&word[..pb]).set_style(text),
+            Span::from(&word[pb..pb + pl]).set_style(pivot_style),
+            Span::from(&word[pb + pl..]).set_style(text),
         ])
     };
 
