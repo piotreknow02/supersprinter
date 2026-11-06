@@ -43,6 +43,10 @@ enum Command {
         /// Words per minute
         #[arg(default_value = "300")]
         wpm: u32,
+
+        /// Extra ffmpeg options, e.g. "-preset slow -crf 18"
+        #[arg(short = 'f', long = "ffmpeg-args", allow_hyphen_values = true, default_value = "")]
+        ffmpeg_args: String,
     },
 }
 
@@ -200,11 +204,11 @@ fn cli_main() -> Result<()> {
     let theme = load_theme()?;
 
     match cli.command {
-        Some(Command::Render { file, output, wpm }) => {
+        Some(Command::Render { file, output, wpm, ffmpeg_args }) => {
             let out = output.unwrap_or_else(|| file.with_extension("mp4"));
             let text = load_book(&file)?;
             eprintln!("rendering {} wpm → {}", wpm, out.display());
-            render::render_video(&text, &out, wpm, &theme)?;
+            render::render_video(&text, &out, wpm, &theme, &ffmpeg_args)?;
             eprintln!("done: {}", out.display());
             Ok(())
         }

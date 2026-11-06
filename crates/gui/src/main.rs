@@ -25,7 +25,8 @@ use gpui_kit::assets::{AllAssets, IconName};
 use gpui_kit::component::{
     Disableable, Theme as KitTheme, ThemeMode, TitleBar,
     button::{Button, ButtonVariants},
-    input::{InputEvent, InputState, NumberInput},
+    collapsible::Collapsible,
+    input::{Input, InputEvent, InputState, NumberInput},
     slider::{Slider, SliderEvent, SliderState},
 };
 
@@ -342,6 +343,8 @@ struct ReaderView {
     root_focus: FocusHandle,
     slider: Entity<SliderState>,
     wpm_input: Entity<InputState>,
+    ffmpeg_input: Entity<InputState>,
+    settings_open: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -372,6 +375,9 @@ impl ReaderView {
                 .min(1.)
                 .max(4000.)
                 .step(25.)
+        });
+        let ffmpeg_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("-preset slow -crf 18")
         });
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(&slider, window, |this, _, ev, window, cx| {
@@ -407,6 +413,8 @@ impl ReaderView {
             root_focus: cx.focus_handle(),
             slider,
             wpm_input,
+            ffmpeg_input,
+            settings_open: false,
             _subscriptions: subscriptions,
         };
         this.restart_task(cx);
@@ -501,6 +509,12 @@ impl ReaderView {
         if self.exporting {
             return;
         }
+        let ffmpeg_args = self.ffmpeg_input.read(cx).value().to_string();
+        if let Err(e) = render::parse_ffmpeg_args(&ffmpeg_args) {
+            self.export_msg = Some(format!("ffmpeg args: {e:#}").into());
+            cx.notify();
+            return;
+        }
         self.export_msg = None;
         let dir = self
             .source
@@ -530,7 +544,9 @@ impl ReaderView {
                 .background_spawn(async move {
                     let result = std::fs::read_to_string(&source)
                         .map_err(Into::into)
-                        .and_then(|text| render::render_video(&text, &dest, wpm, theme));
+                        .and_then(|text| {
+                            render::render_video(&text, &dest, wpm, theme, &ffmpeg_args)
+                        });
                     (dest, result)
                 })
                 .await;
@@ -548,6 +564,13 @@ impl ReaderView {
     }
 
     fn on_reader_key(&mut self, e: &KeyDownEvent, w: &mut Window, cx: &mut Context<Self>) {
+        // Keys typed inside an input (wpm / ffmpeg args) must not drive the
+        // reader: act only when the reader root itself holds (or lacks) focus.
+        // Stopping the bubble in the input guards instead would swallow the
+        // keystrokes before gpui's text-input path reaches the editor.
+        if w.focused(cx).is_some_and(|f| f != self.root_focus) {
+            return;
+        }
         match e.keystroke.key.as_str() {
             "space" => self.set_playing(!self.playing, cx),
             "left" => self.step(-1, cx),
@@ -719,14 +742,16 @@ impl Render for ReaderView {
             .flex_1()
         };
 
-        // The guard div is REQUIRED: keys typed in the box (space, q, +/-)
-        // would otherwise bubble to the reader root's key context and toggle
-        // play, close the window, or step wpm. The focused NumberInput sits
-        // deeper and receives keys first; the guard only stops the bubble.
+        // The guard div is REQUIRED: the root's on_click refocuses the
+        // reader, which would steal focus from the box on every click; the
+        // click stop below prevents that bubble. Key isolation lives in
+        // on_reader_key's focus gate instead — stopping keys here would
+        // block typing in the box.
         let input = div()
             .id("wpm-input-guard")
+            .debug_selector(|| "wpm-input-guard".into())
             .key_context("wpm-input")
-            .on_key_down(|_e, _w, cx| cx.stop_propagation())
+            .on_click(|_e, _w, cx| cx.stop_propagation())
             .w(px(120.))
             .child(NumberInput::new(&self.wpm_input).accessibility_label("Words per minute"));
 
@@ -790,6 +815,52 @@ impl Render for ReaderView {
                 ]),
             ]);
 
+        // Collapsible ffmpeg-args row, right-aligned under the controls bar.
+        // The guard div is REQUIRED (same reason as wpm-input-guard): typing
+        // '-', space or 'q' in the box must not bubble to the reader root's
+        // key context (step / pause / close).
+        let settings = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .justify_end()
+            .px_3()
+            .child(
+                Collapsible::new()
+                    .open(self.settings_open)
+                    .child(
+                        div()
+                            .id("ffmpeg-toggle")
+                            .debug_selector(|| "ffmpeg-toggle".into())
+                            .child(
+                                Button::new("ffmpeg-settings")
+                                    .icon(if self.settings_open {
+                                        IconName::ChevronUp
+                                    } else {
+                                        IconName::ChevronDown
+                                    })
+                                    .label("ffmpeg args")
+                                    .on_click(cx.listener(|this, _, _w, cx| {
+                                        this.settings_open = !this.settings_open;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .content(
+                        div()
+                            .w(px(420.))
+                            .pt_2()
+                            .child(
+                                div()
+                                    .id("ffmpeg-input-guard")
+                                    .debug_selector(|| "ffmpeg-input-guard".into())
+                                    .key_context("ffmpeg-input")
+                                    .on_click(|_e, _w, cx| cx.stop_propagation())
+                                    .child(Input::new(&self.ffmpeg_input)),
+                            ),
+                    ),
+            );
+
         let mut root = div()
             .id("root")
             .key_context("reader")
@@ -807,7 +878,11 @@ impl Render for ReaderView {
         let title = self.title.clone();
         root = root.child(app_title_bar(theme, title, |w, cx| close_window(w, cx)));
 
-        root.children([controls.into_any_element(), reader.into_any_element()])
+        root.children([
+            controls.into_any_element(),
+            settings.into_any_element(),
+            reader.into_any_element(),
+        ])
     }
 }
 
@@ -903,4 +978,75 @@ fn main() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
+    use std::sync::LazyLock;
+
+    static TEST_THEME: LazyLock<Theme> = LazyLock::new(|| Theme {
+        background: [10, 10, 10],
+        text: [240, 240, 240],
+        arrows: [120, 120, 120],
+        pivot: [220, 50, 50],
+        font: "monospace".into(),
+    });
+
+    fn open_reader<'a>(
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<ReaderView>, &'a mut VisualTestContext) {
+        cx.update(|cx| gpui_kit::init(cx));
+        cx.add_window_view(|window, cx| {
+            ReaderView::new(
+                window,
+                "the quick brown fox".into(),
+                PathBuf::from("/tmp/b.txt"),
+                &TEST_THEME,
+                300,
+                "test".into(),
+                cx,
+            )
+        })
+    }
+
+    fn click(cx: &mut VisualTestContext, selector: &'static str) {
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("no bounds for {selector:?}"));
+        cx.simulate_click(bounds.center(), Modifiers::default());
+    }
+
+    fn assert_focused(view: &Entity<ReaderView>, cx: &mut VisualTestContext, which: &str) {
+        let (focused, want) = cx.update(|window, app| {
+            let want = match which {
+                "ffmpeg" => view.read(app).ffmpeg_input.read(app).focus_handle(app),
+                "wpm" => view.read(app).wpm_input.read(app).focus_handle(app),
+                _ => unreachable!(),
+            };
+            (window.focused(app), want)
+        });
+        assert!(
+            focused.as_ref().is_some_and(|f| f == &want),
+            "{which} input lost focus after click: {focused:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn ffmpeg_input_keeps_focus(cx: &mut TestAppContext) {
+        let (view, cx) = open_reader(cx);
+        cx.update(|_, _| {});
+        click(cx, "ffmpeg-toggle");
+        click(cx, "ffmpeg-input-guard");
+        assert_focused(&view, cx, "ffmpeg");
+    }
+
+    #[gpui::test]
+    fn wpm_input_keeps_focus(cx: &mut TestAppContext) {
+        let (view, cx) = open_reader(cx);
+        cx.update(|_, _| {});
+        click(cx, "wpm-input-guard");
+        assert_focused(&view, cx, "wpm");
+    }
 }

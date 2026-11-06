@@ -135,9 +135,36 @@ fn blend(dst: &mut Rgba<u8>, color: Rgba<u8>, coverage: f32) {
     }
 }
 
+/// Parse extra ffmpeg options from a user string into (key, value) pairs.
+/// Accepts ffmpeg-CLI style `-key value` pairs only, whitespace separated:
+/// `-preset slow -crf 18`. Duplicate keys: last wins.
+pub fn parse_ffmpeg_args(input: &str) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    let mut it = input.split_whitespace();
+    while let Some(tok) = it.next() {
+        anyhow::ensure!(
+            tok.len() > 1 && tok.starts_with('-'),
+            "unexpected token {tok:?}: expected '-key value' pairs"
+        );
+        let k = &tok[1..];
+        let v = it
+            .next()
+            .with_context(|| format!("missing value for '-{k}'"))?;
+        out.push((k.to_string(), v.to_string()));
+    }
+    Ok(out)
+}
+
 /// Render `book_text` to an mp4 at `out`.
-pub fn render_video(book_text: &str, out: &Path, wpm: u32, theme: &Theme) -> Result<()> {
+pub fn render_video(
+    book_text: &str,
+    out: &Path,
+    wpm: u32,
+    theme: &Theme,
+    ffmpeg_args: &str,
+) -> Result<()> {
     anyhow::ensure!(wpm > 0, "wpm must be positive");
+    let user_args = parse_ffmpeg_args(ffmpeg_args)?;
     let font = load_font(theme)?;
 
     ffmpeg::init().map_err(|e| anyhow::anyhow!("ffmpeg init failed: {e}"))?;
@@ -156,6 +183,9 @@ pub fn render_video(book_text: &str, out: &Path, wpm: u32, theme: &Theme) -> Res
     let mut opts = Dictionary::new();
     opts.set("preset", "medium");
     opts.set("crf", "20");
+    for (k, v) in &user_args {
+        opts.set(k, v);
+    }
     let mut encoder = ctx
         .encoder()
         .video()
@@ -169,7 +199,11 @@ pub fn render_video(book_text: &str, out: &Path, wpm: u32, theme: &Theme) -> Res
         .map_err(|e| anyhow::anyhow!("failed to open libx264 encoder: {e}"))?;
     stream.set_parameters(&encoder);
 
-    octx.write_header()
+    let mut mux_opts = Dictionary::new();
+    for (k, v) in &user_args {
+        mux_opts.set(k, v);
+    }
+    octx.write_header_with(mux_opts)
         .map_err(|e| anyhow::anyhow!("failed to write mp4 header: {e}"))?;
 
     // The mp4 muxer rewrites the stream timebase (typically 1/90000); packets
@@ -244,4 +278,59 @@ fn drain_packets(
         packet.write(octx).map_err(|e| anyhow::anyhow!("packet write failed: {e}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ffmpeg_args;
+
+    #[test]
+    fn empty_input_yields_no_pairs() {
+        assert_eq!(
+            parse_ffmpeg_args("").unwrap(),
+            Vec::<(String, String)>::new()
+        );
+    }
+
+    #[test]
+    fn parses_key_value_pairs() {
+        assert_eq!(
+            parse_ffmpeg_args("-preset slow -crf 18").unwrap(),
+            vec![
+                ("preset".to_string(), "slow".to_string()),
+                ("crf".to_string(), "18".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_leading_plus_in_value() {
+        assert_eq!(
+            parse_ffmpeg_args("-movflags +faststart").unwrap(),
+            vec![("movflags".to_string(), "+faststart".to_string())]
+        );
+    }
+
+    #[test]
+    fn keeps_colon_value_verbatim() {
+        assert_eq!(
+            parse_ffmpeg_args("-x264-params keyint=250:scenecut=0").unwrap(),
+            vec![(
+                "x264-params".to_string(),
+                "keyint=250:scenecut=0".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn dangling_key_errors() {
+        let e = parse_ffmpeg_args("-crf").unwrap_err().to_string();
+        assert!(e.contains("missing value for '-crf'"), "{e}");
+    }
+
+    #[test]
+    fn bare_word_errors() {
+        let e = parse_ffmpeg_args("foo").unwrap_err().to_string();
+        assert!(e.contains("unexpected token"), "{e}");
+    }
 }
