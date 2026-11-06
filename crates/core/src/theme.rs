@@ -50,13 +50,18 @@ pub fn parse_hex(s: &str) -> anyhow::Result<Rgb> {
     Ok([byte(0)?, byte(2)?, byte(4)?])
 }
 
-fn candidate_paths() -> Vec<PathBuf> {
-    let mut paths = vec![PathBuf::from("theme.toml")];
-    if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".config").join("supersprinter").join("theme.toml"));
-        paths.push(home.join(".supersprinter").join("theme.toml"));
-    }
-    paths
+/// Theme file candidates in priority order. The arity is fixed at compile
+/// time: `./theme.toml` plus two `$HOME` locations. The `$HOME` candidates are
+/// `None` when the home directory cannot be resolved.
+fn candidate_paths() -> [Option<PathBuf>; 3] {
+    let home = dirs::home_dir();
+    [
+        Some(PathBuf::from("theme.toml")),
+        home.as_ref()
+            .map(|home| home.join(".config").join("supersprinter").join("theme.toml")),
+        home.as_ref()
+            .map(|home| home.join(".supersprinter").join("theme.toml")),
+    ]
 }
 
 /// Parse theme TOML. `source` names the origin in error messages.
@@ -112,7 +117,7 @@ pub fn load_theme() -> anyhow::Result<&'static Theme> {
 }
 
 fn discover_theme() -> anyhow::Result<Theme> {
-    for path in candidate_paths() {
+    for path in candidate_paths().into_iter().flatten() {
         if !path.is_file() {
             continue;
         }
