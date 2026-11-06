@@ -8,7 +8,7 @@ use serde::Deserialize;
 const DEFAULT_TOML: &str = include_str!("../../../themes/default.toml");
 
 /// Value of `font` used when the theme omits it. Treated as a generic alias:
-/// consumers fall back to their built-in monospace resolution for it.
+/// [`resolve_font`](crate::resolve_font) maps it to the system monospace font.
 pub const DEFAULT_FONT: &str = "monospace";
 
 pub type Rgb = [u8; 3];

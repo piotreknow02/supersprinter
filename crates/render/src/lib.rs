@@ -4,7 +4,8 @@
 use std::path::Path;
 
 use ab_glyph::{Font, FontArc, PxScale, ScaleFont};
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result};
+use fontdb::Source;
 use core::{Frame, Theme, frames};
 use ffmpeg_next as ffmpeg;
 use ffmpeg::format::Pixel;
@@ -18,51 +19,23 @@ pub const HEIGHT: u32 = 720;
 pub const FPS: u32 = 24;
 const FONT_PX: f32 = 64.0;
 
-const FONT_CANDIDATES: &[&str] = &[
-    "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
-    "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf",
-    "/usr/share/fonts/google-noto-vf/NotoSansMono[wght].ttf",
-];
-
-/// Resolve the theme font. The generic `monospace` alias uses the fixed
-/// candidate paths (deterministic output); any other family name is looked
-/// up in the system fonts via fontdb, which also covers `~/.fonts`.
+/// Resolve the theme font via the shared fontdb resolver ([`core::resolve_font`])
+/// and load the matched face into ab_glyph.
 fn load_font(theme: &Theme) -> Result<FontArc> {
-    if theme.font != core::DEFAULT_FONT {
-        return load_font_by_family(&theme.font);
+    let resolved = core::resolve_font(theme)?;
+    if resolved.fell_back && theme.font != core::DEFAULT_FONT {
+        eprintln!(
+            "warning: theme font {:?} not installed, using {:?}",
+            theme.font, resolved.family
+        );
     }
-    let mut tried = Vec::new();
-    for path in FONT_CANDIDATES {
-        let loaded: Result<FontArc> = (|| {
-            let data = std::fs::read(path)?;
-            Ok(FontArc::try_from_vec(data)?)
-        })();
-        match loaded {
-            Ok(font) => return Ok(font),
-            Err(e) => tried.push(format!("{path}: {e}")),
-        }
-    }
-    bail!("no usable monospace font found. Tried: {}", tried.join(", "))
-}
-
-fn load_font_by_family(family: &str) -> Result<FontArc> {
-    let mut db = fontdb::Database::new();
-    db.load_system_fonts();
-    let id = db
-        .query(&fontdb::Query {
-            families: &[fontdb::Family::Name(family)],
-            ..Default::default()
-        })
-        .with_context(|| format!("theme font {family:?} is not installed"))?;
-    let face = db.face(id).context("fontdb query returned an unknown face")?;
-    let data = match &face.source {
-        fontdb::Source::File(path) => std::fs::read(path)?,
-        fontdb::Source::Binary(data) | fontdb::Source::SharedFile(_, data) => {
+    let data = match &resolved.source {
+        Source::File(path) => std::fs::read(path)?,
+        Source::Binary(data) | Source::SharedFile(_, data) => {
             data.as_ref().as_ref().to_vec()
         }
     };
-    let face_index = face.index;
-    let font = ab_glyph::FontVec::try_from_vec_and_index(data, face_index)?;
+    let font = ab_glyph::FontVec::try_from_vec_and_index(data, resolved.index)?;
     Ok(FontArc::from(font))
 }
 

@@ -5,8 +5,8 @@
 //! backend echoes whatever decoration mode we request, so requesting Server
 //! on GNOME yields a window with no titlebar at all. We request Client and
 //! paint our own titlebar (close / minimize / fullscreen, drag-to-move,
-//! double-click to zoom) plus 6px resize strips wired to
-//! `start_window_resize`.
+//! double-click to zoom). Edge resizing is not handled; it awaits a gpui
+//! builtin.
 //!
 //! The reader area is a single `canvas`: the word is shaped with the pivot
 //! glyph centered on the viewport midline, and the ▼/▲ markers are painted as
@@ -20,12 +20,12 @@ use std::time::Duration;
 
 use clap::Parser;
 use gpui::{
-    App, AppContext, Application, Bounds, Context, CursorStyle, Decorations, FocusHandle,
+    App, AppContext, Application, Bounds, Context, Decorations, FocusHandle,
     Focusable, Global, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, PathBuilder, PathPromptOptions, Pixels, Render, ResizeEdge,
-    StatefulInteractiveElement, Styled, SharedString, Task, TextRun, Tiling, Timer, TitlebarOptions,
+    MouseMoveEvent, ParentElement, PathBuilder, PathPromptOptions, Pixels, Render,
+    StatefulInteractiveElement, Styled, SharedString, Task, TextRun, Timer, TitlebarOptions,
     Window, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions, canvas, div, font,
-    point, prelude::FluentBuilder, px, rgb, size,
+    point, prelude::FluentBuilder, px, size,
 };
 
 use core::{Frame, FramePos, Theme, first_pos, frame_at, frames, load_book, load_theme, next_pos, seek_pos};
@@ -35,8 +35,6 @@ const SLIDER_MAX: u32 = 600;
 const FONT: &str = core::DEFAULT_FONT;
 /// Height of the client-side titlebar.
 const BAR_H: f32 = 34.;
-/// Width of the invisible resize strips along the window edges.
-const EDGE: f32 = 6.;
 
 #[derive(Parser)]
 #[command(name = "supersprinter-gui", about = "RSVP speed reader")]
@@ -48,7 +46,13 @@ struct Cli {
 }
 
 fn rgb_bytes(c: core::Rgb) -> gpui::Rgba {
-    rgb(((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32)
+    let [r, g, b] = c;
+    gpui::Rgba {
+        r: (r as f32) / 255.0,
+        g: (g as f32) / 255.0,
+        b: (b as f32) / 255.0,
+        a: 1.0,
+    }
 }
 
 /// True while a titlebar drag is armed (mouse down on the titlebar, waiting
@@ -56,26 +60,14 @@ fn rgb_bytes(c: core::Rgb) -> gpui::Rgba {
 struct TitleDrag(bool);
 impl Global for TitleDrag {}
 
-/// The font family actually used: the theme's `font` when it is installed,
-/// otherwise the first monospace candidate that is. gpui's Linux font lookup
-/// matches fontdb family names exactly, so the fontconfig alias "monospace"
-/// resolves to nothing and silently falls back to a PROPORTIONAL font — which
-/// is why per-char advance math misaligned the pivot arrows. Resolved once at
-/// startup from `all_font_names()`.
+/// The font family actually used, resolved once at startup by
+/// [`core::resolve_font`] (fontdb): the theme's `font` when it is installed,
+/// otherwise a monospace fallback. gpui's Linux font lookup matches fontdb
+/// family names exactly, so the fontconfig alias "monospace" resolves to
+/// nothing and silently falls back to a PROPORTIONAL font — which is why
+/// per-char advance math misaligned the pivot arrows.
 struct UiFont(SharedString);
 impl Global for UiFont {}
-
-const MONO_CANDIDATES: &[&str] = &[
-    "JetBrains Mono",
-    "Fira Mono",
-    "Hack",
-    "Cascadia Mono",
-    "DejaVu Sans Mono",
-    "Noto Sans Mono",
-    "Liberation Mono",
-    "Ubuntu Mono",
-    "monospace",
-];
 
 fn ui_font(cx: &App) -> SharedString {
     cx.try_global::<UiFont>()
@@ -205,92 +197,6 @@ fn title_bar(
                     on_close(window, cx);
                 }),
         )
-}
-
-/// Invisible edge strips that start a compositor resize on mouse-down.
-/// Edges the window is tiled against are skipped.
-fn resize_strips(tiling: Tiling) -> Vec<impl IntoElement> {
-    let e = px(EDGE);
-    let corner = px(EDGE * 2.);
-    let mk = |id: &'static str, edge: ResizeEdge, cursor: CursorStyle| {
-        div()
-            .id(id)
-            .absolute()
-            .cursor(cursor)
-            .on_mouse_down(MouseButton::Left, move |_e, window, _cx| {
-                window.start_window_resize(edge);
-            })
-    };
-    let mut v = Vec::new();
-    if !tiling.top {
-        v.push(
-            mk("rz-top", ResizeEdge::Top, CursorStyle::ResizeUp)
-                .top_0()
-                .left_0()
-                .right_0()
-                .h(e),
-        );
-    }
-    if !tiling.bottom {
-        v.push(
-            mk("rz-bot", ResizeEdge::Bottom, CursorStyle::ResizeDown)
-                .bottom_0()
-                .left_0()
-                .right_0()
-                .h(e),
-        );
-    }
-    if !tiling.left {
-        v.push(
-            mk("rz-left", ResizeEdge::Left, CursorStyle::ResizeLeft)
-                .top_0()
-                .bottom_0()
-                .left_0()
-                .w(e),
-        );
-    }
-    if !tiling.right {
-        v.push(
-            mk("rz-right", ResizeEdge::Right, CursorStyle::ResizeRight)
-                .top_0()
-                .bottom_0()
-                .right_0()
-                .w(e),
-        );
-    }
-    if !tiling.top && !tiling.left {
-        v.push(
-            mk("rz-tl", ResizeEdge::TopLeft, CursorStyle::ResizeUpLeftDownRight)
-                .top_0()
-                .left_0()
-                .size(corner),
-        );
-    }
-    if !tiling.top && !tiling.right {
-        v.push(
-            mk("rz-tr", ResizeEdge::TopRight, CursorStyle::ResizeUpRightDownLeft)
-                .top_0()
-                .right_0()
-                .size(corner),
-        );
-    }
-    if !tiling.bottom && !tiling.left {
-        v.push(
-            mk("rz-bl", ResizeEdge::BottomLeft, CursorStyle::ResizeUpRightDownLeft)
-                .bottom_0()
-                .left_0()
-                .size(corner),
-        );
-    }
-    if !tiling.bottom && !tiling.right {
-        v.push(
-            mk("rz-br", ResizeEdge::BottomRight, CursorStyle::ResizeUpLeftDownRight)
-                .bottom_0()
-                .right_0()
-                .size(corner),
-        );
-    }
-    v
 }
 
 /// WPM slider (10–600): click or drag sets the value via `setter`.
@@ -455,10 +361,7 @@ impl Focusable for LauncherView {
 impl Render for LauncherView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
-        let tiling = match window.window_decorations() {
-            Decorations::Client { tiling } => Some(tiling),
-            Decorations::Server => None,
-        };
+        let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
 
         let mut root = div()
             .id("launcher")
@@ -479,11 +382,8 @@ impl Render for LauncherView {
             .bg(rgb_bytes(theme.background))
             .text_color(rgb_bytes(theme.text));
 
-        if let Some(tiling) = tiling {
+        if client_decorated {
             root = root.child(title_bar("launcher-titlebar", theme, "Supersprinter".into(), close_window));
-            for strip in resize_strips(tiling) {
-                root = root.child(strip);
-            }
         }
 
         let path_label = match &self.path {
@@ -781,10 +681,7 @@ impl Focusable for ReaderView {
 impl Render for ReaderView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
-        let tiling = match window.window_decorations() {
-            Decorations::Client { tiling } => Some(tiling),
-            Decorations::Server => None,
-        };
+        let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
         let frame = self.frame();
         let word: &str = frame.and_then(|f| f.word).unwrap_or("");
         let pivot = frame.map_or(0, |f| f.pivot).min(word.chars().count().saturating_sub(1));
@@ -1014,14 +911,11 @@ impl Render for ReaderView {
                 this.root_focus.focus(window);
             }));
 
-        if let Some(tiling) = tiling {
+        if client_decorated {
             let title = self.title.clone();
             root = root.child(title_bar("reader-titlebar", theme, title, |w, cx| {
                 close_window(w, cx);
             }));
-            for strip in resize_strips(tiling) {
-                root = root.child(strip);
-            }
         }
 
         root.child(controls).child(reader)
@@ -1053,25 +947,21 @@ fn main() {
 
     Application::new().run(move |cx: &mut App| {
         cx.set_global(TitleDrag(false));
-        let names = cx.text_system().all_font_names();
-        let fam: SharedString = names
-            .iter()
-            .find(|n| **n == theme.font)
-            .cloned()
-            .map(SharedString::from)
-            .unwrap_or_else(|| {
-                if theme.font != FONT {
+        let fam: SharedString = match core::resolve_font(&theme) {
+            Ok(r) => {
+                if r.fell_back && theme.font != FONT {
                     eprintln!(
-                        "warning: theme font {:?} not installed, using a monospace fallback",
-                        theme.font
+                        "warning: theme font {:?} not installed, using {:?}",
+                        theme.font, r.family
                     );
                 }
-                MONO_CANDIDATES
-                    .iter()
-                    .find(|c| names.iter().any(|n| n == *c))
-                    .map(|s| SharedString::new_static(*s))
-                    .unwrap_or_else(|| SharedString::new_static(FONT))
-            });
+                r.family.into()
+            }
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                std::process::exit(1);
+            }
+        };
         cx.set_global(UiFont(fam));
         match direct {
             Some((path, text)) => {

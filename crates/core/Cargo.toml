@@ -9,3 +9,4 @@ toml = { workspace = true }
 dirs = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+fontdb = { workspace = true }
