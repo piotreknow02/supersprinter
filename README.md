@@ -18,7 +18,8 @@ MP4 renderer.
 
 `theme.toml` with `background`, `text`, `arrows` and optional `pivot` as
 `#rrggbb`. Search order: `./theme.toml`, `~/.config/supersprinter/theme.toml`,
-`~/.supersprinter/theme.toml`. An invalid file is a hard error.
+`~/.supersprinter/theme.toml`. With no file found, the default theme embedded
+at build time (`themes/default.toml`) is used. An invalid file is a hard error.
 
 ## Building
 

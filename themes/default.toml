@@ -1,0 +1,5 @@
+# Default Supersprinter theme, embedded into the binary at build time.
+background = "#101014"
+text = "#e6e6e6"
+arrows = "#ff5f56"
+pivot = "#ff5f56"

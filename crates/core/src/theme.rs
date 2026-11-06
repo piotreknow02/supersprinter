@@ -2,6 +2,10 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+/// TOML source of the built-in default theme, embedded at compile time from
+/// `themes/default.toml` at the workspace root.
+const DEFAULT_TOML: &str = include_str!("../../../themes/default.toml");
+
 pub type Rgb = [u8; 3];
 
 /// Presentation theme. Loaded from TOML; see search order in [`load_theme`].
@@ -11,17 +15,6 @@ pub struct Theme {
     pub text: Rgb,
     pub arrows: Rgb,
     pub pivot: Rgb,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme {
-            background: [0x10, 0x10, 0x14],
-            text: [0xe6, 0xe6, 0xe6],
-            arrows: [0xff, 0x5f, 0x56],
-            pivot: [0xff, 0x5f, 0x56],
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,9 +50,30 @@ fn candidate_paths() -> Vec<PathBuf> {
     paths
 }
 
+/// Parse theme TOML. `source` names the origin in error messages.
+fn parse_theme(raw: &str, source: &str) -> anyhow::Result<Theme> {
+    let file: ThemeFile = toml::from_str(raw)
+        .map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"))?;
+    let parse = |s: &str| {
+        parse_hex(s).map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"))
+    };
+    let pivot = match &file.pivot {
+        Some(p) => parse(p)?,
+        None => parse_hex(&file.text)
+            .map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"))?,
+    };
+    Ok(Theme {
+        background: parse(&file.background)?,
+        text: parse(&file.text)?,
+        arrows: parse(&file.arrows)?,
+        pivot,
+    })
+}
+
 /// Load the theme. Search order, first existing file wins:
 /// `./theme.toml` → `$HOME/.config/supersprinter/theme.toml` →
-/// `$HOME/.supersprinter/theme.toml`. No file → built-in default.
+/// `$HOME/.supersprinter/theme.toml`. No file → the default theme embedded
+/// at build time from `themes/default.toml`.
 /// A found-but-invalid file is a hard error.
 pub fn load_theme() -> anyhow::Result<Theme> {
     for path in candidate_paths() {
@@ -68,23 +82,9 @@ pub fn load_theme() -> anyhow::Result<Theme> {
         }
         let raw = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read theme {}: {e}", path.display()))?;
-        let file: ThemeFile = toml::from_str(&raw)
-            .map_err(|e| anyhow::anyhow!("invalid theme {}: {e}", path.display()))?;
-        let parse = |s: &str| {
-            parse_hex(s).map_err(|e| anyhow::anyhow!("invalid theme {}: {e}", path.display()))
-        };
-        let pivot = match &file.pivot {
-            Some(p) => parse(p)?,
-            None => parse_hex(&file.text)?,
-        };
-        return Ok(Theme {
-            background: parse(&file.background)?,
-            text: parse(&file.text)?,
-            arrows: parse(&file.arrows)?,
-            pivot,
-        });
+        return parse_theme(&raw, &path.display().to_string());
     }
-    Ok(Theme::default())
+    parse_theme(DEFAULT_TOML, "built-in default theme")
 }
 
 #[cfg(test)]
@@ -137,5 +137,14 @@ arrows = "#ffffff"
 "##;
         let f: ThemeFile = toml::from_str(no_pivot).unwrap();
         assert!(f.pivot.is_none());
+    }
+
+    #[test]
+    fn embedded_default_parses() {
+        let t = parse_theme(DEFAULT_TOML, "test").unwrap();
+        assert_eq!(t.background, [0x10, 0x10, 0x14]);
+        assert_eq!(t.text, [0xe6, 0xe6, 0xe6]);
+        assert_eq!(t.arrows, [0xff, 0x5f, 0x56]);
+        assert_eq!(t.pivot, [0xff, 0x5f, 0x56]);
     }
 }
