@@ -7,5 +7,6 @@ edition = "2024"
 core = { workspace = true }
 image = { workspace = true }
 ab_glyph = { workspace = true }
+fontdb = { workspace = true }
 ffmpeg-next = { workspace = true }
 anyhow = { workspace = true }

@@ -24,7 +24,13 @@ const FONT_CANDIDATES: &[&str] = &[
     "/usr/share/fonts/google-noto-vf/NotoSansMono[wght].ttf",
 ];
 
-fn load_font() -> Result<FontArc> {
+/// Resolve the theme font. The generic `monospace` alias uses the fixed
+/// candidate paths (deterministic output); any other family name is looked
+/// up in the system fonts via fontdb, which also covers `~/.fonts`.
+fn load_font(theme: &Theme) -> Result<FontArc> {
+    if theme.font != core::DEFAULT_FONT {
+        return load_font_by_family(&theme.font);
+    }
     let mut tried = Vec::new();
     for path in FONT_CANDIDATES {
         let loaded: Result<FontArc> = (|| {
@@ -37,6 +43,27 @@ fn load_font() -> Result<FontArc> {
         }
     }
     bail!("no usable monospace font found. Tried: {}", tried.join(", "))
+}
+
+fn load_font_by_family(family: &str) -> Result<FontArc> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    let id = db
+        .query(&fontdb::Query {
+            families: &[fontdb::Family::Name(family)],
+            ..Default::default()
+        })
+        .with_context(|| format!("theme font {family:?} is not installed"))?;
+    let face = db.face(id).context("fontdb query returned an unknown face")?;
+    let data = match &face.source {
+        fontdb::Source::File(path) => std::fs::read(path)?,
+        fontdb::Source::Binary(data) | fontdb::Source::SharedFile(_, data) => {
+            data.as_ref().as_ref().to_vec()
+        }
+    };
+    let face_index = face.index;
+    let font = ab_glyph::FontVec::try_from_vec_and_index(data, face_index)?;
+    Ok(FontArc::from(font))
 }
 
 /// Number of video frames an RSVP frame occupies at the given wpm.
@@ -138,7 +165,7 @@ fn blend(dst: &mut Rgba<u8>, color: Rgba<u8>, coverage: f32) {
 /// Render `book_text` to an mp4 at `out`.
 pub fn render_video(book_text: &str, out: &Path, wpm: u32, theme: &Theme) -> Result<()> {
     anyhow::ensure!(wpm > 0, "wpm must be positive");
-    let font = load_font()?;
+    let font = load_font(theme)?;
 
     ffmpeg::init().map_err(|e| anyhow::anyhow!("ffmpeg init failed: {e}"))?;
 

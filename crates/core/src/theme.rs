@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 
@@ -6,15 +7,21 @@ use serde::Deserialize;
 /// `themes/default.toml` at the workspace root.
 const DEFAULT_TOML: &str = include_str!("../../../themes/default.toml");
 
+/// Value of `font` used when the theme omits it. Treated as a generic alias:
+/// consumers fall back to their built-in monospace resolution for it.
+pub const DEFAULT_FONT: &str = "monospace";
+
 pub type Rgb = [u8; 3];
 
 /// Presentation theme. Loaded from TOML; see search order in [`load_theme`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Theme {
     pub background: Rgb,
     pub text: Rgb,
     pub arrows: Rgb,
     pub pivot: Rgb,
+    /// Font family name used for the word display (and all GUI text).
+    pub font: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +35,8 @@ struct ThemeFile<'a> {
     arrows: &'a str,
     #[serde(default)]
     pivot: Option<&'a str>,
+    #[serde(default)]
+    font: Option<&'a str>,
 }
 
 /// Parse `#rrggbb` (case-insensitive) into RGB bytes.
@@ -62,20 +71,47 @@ fn parse_theme(raw: &str, source: &str) -> anyhow::Result<Theme> {
         None => parse_hex(&file.text)
             .map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"))?,
     };
+    let font = match file.font {
+        Some(f) => {
+            anyhow::ensure!(
+                !f.trim().is_empty(),
+                "invalid theme {source}: font must not be empty"
+            );
+            f.to_owned()
+        }
+        None => DEFAULT_FONT.to_owned(),
+    };
     Ok(Theme {
         background: parse(&file.background)?,
         text: parse(&file.text)?,
         arrows: parse(&file.arrows)?,
         pivot,
+        font,
     })
 }
+
+/// Process-wide theme instance, stored by [`load_theme`].
+static THEME: OnceLock<Theme> = OnceLock::new();
 
 /// Load the theme. Search order, first existing file wins:
 /// `./theme.toml` → `$HOME/.config/supersprinter/theme.toml` →
 /// `$HOME/.supersprinter/theme.toml`. No file → the default theme embedded
 /// at build time from `themes/default.toml`.
 /// A found-but-invalid file is a hard error.
-pub fn load_theme() -> anyhow::Result<Theme> {
+///
+/// The theme is immutable once loaded, so it is stored for the lifetime of
+/// the process and every caller shares one `&'static` reference. Repeated
+/// calls return the same reference without re-reading files.
+pub fn load_theme() -> anyhow::Result<&'static Theme> {
+    if let Some(theme) = THEME.get() {
+        return Ok(theme);
+    }
+    let theme = discover_theme()?;
+    let _ = THEME.set(theme); // concurrent first call: keep the winner
+    Ok(THEME.get().unwrap())
+}
+
+fn discover_theme() -> anyhow::Result<Theme> {
     for path in candidate_paths() {
         if !path.is_file() {
             continue;
@@ -104,14 +140,14 @@ mod tests {
 background = "#101014"
 text = "#e6e6e6"
 arrows = "#ff5f56"
-pivot = "#ff5f56"
+font = "JetBrains Mono"
 "##;
 
     #[test]
     fn toml_roundtrip_and_missing_key() {
         let f: ThemeFile = toml::from_str(GOOD).unwrap();
         assert_eq!(parse_hex(&f.background).unwrap(), [0x10, 0x10, 0x14]);
-        assert!(f.pivot.is_some());
+        assert_eq!(f.font.as_deref(), Some("JetBrains Mono"));
 
         let missing = r##"
 background = "#101014"
@@ -146,5 +182,32 @@ arrows = "#ffffff"
         assert_eq!(t.text, [0xe6, 0xe6, 0xe6]);
         assert_eq!(t.arrows, [0xff, 0x5f, 0x56]);
         assert_eq!(t.pivot, [0xff, 0x5f, 0x56]);
+        assert_eq!(t.font, DEFAULT_FONT);
+    }
+
+    #[test]
+    fn font_default_and_custom() {
+        let no_font = r##"
+background = "#000000"
+text = "#ffffff"
+arrows = "#ffffff"
+"##;
+        assert_eq!(parse_theme(no_font, "test").unwrap().font, DEFAULT_FONT);
+
+        let custom = r##"
+background = "#000000"
+text = "#ffffff"
+arrows = "#ffffff"
+font = "Fira Mono"
+"##;
+        assert_eq!(parse_theme(custom, "test").unwrap().font, "Fira Mono");
+
+        let empty = r##"
+background = "#000000"
+text = "#ffffff"
+arrows = "#ffffff"
+font = "  "
+"##;
+        assert!(parse_theme(empty, "test").is_err());
     }
 }

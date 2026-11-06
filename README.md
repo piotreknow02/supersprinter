@@ -16,10 +16,13 @@ MP4 renderer.
 
 ## Theme
 
-`theme.toml` with `background`, `text`, `arrows` and optional `pivot` as
-`#rrggbb`. Search order: `./theme.toml`, `~/.config/supersprinter/theme.toml`,
-`~/.supersprinter/theme.toml`. With no file found, the default theme embedded
-at build time (`themes/default.toml`) is used. An invalid file is a hard error.
+`theme.toml` with `background`, `text`, `arrows` as `#rrggbb`, optional
+`pivot` (`#rrggbb`, defaults to `text`) and optional `font` (font family
+name, default `monospace`; applied by the GUI and MP4 renderer — the CLI
+uses the terminal font). Search order: `./theme.toml`,
+`~/.config/supersprinter/theme.toml`, `~/.supersprinter/theme.toml`. With
+no file found, the default theme embedded at build time
+(`themes/default.toml`) is used. An invalid file is a hard error.
 
 ## Building
 

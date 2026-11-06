@@ -5938,6 +5938,7 @@ dependencies = [
  "ab_glyph",
  "anyhow",
  "ffmpeg-next",
+ "fontdb 0.23.0",
  "image",
  "supersprinter-core",
 ]

@@ -32,7 +32,7 @@ use core::{Frame, FramePos, Theme, first_pos, frame_at, frames, load_book, load_
 
 const SLIDER_MIN: u32 = 10;
 const SLIDER_MAX: u32 = 600;
-const FONT: &str = "monospace";
+const FONT: &str = core::DEFAULT_FONT;
 /// Height of the client-side titlebar.
 const BAR_H: f32 = 34.;
 /// Width of the invisible resize strips along the window edges.
@@ -56,13 +56,14 @@ fn rgb_bytes(c: core::Rgb) -> gpui::Rgba {
 struct TitleDrag(bool);
 impl Global for TitleDrag {}
 
-/// The monospace family actually available on this system. gpui's Linux font
-/// lookup matches fontdb family names exactly, so the fontconfig alias
-/// "monospace" resolves to nothing and silently falls back to a PROPORTIONAL
-/// font — which is why per-char advance math misaligned the pivot arrows.
-/// Resolved once at startup from `all_font_names()`.
-struct MonoFamily(SharedString);
-impl Global for MonoFamily {}
+/// The font family actually used: the theme's `font` when it is installed,
+/// otherwise the first monospace candidate that is. gpui's Linux font lookup
+/// matches fontdb family names exactly, so the fontconfig alias "monospace"
+/// resolves to nothing and silently falls back to a PROPORTIONAL font — which
+/// is why per-char advance math misaligned the pivot arrows. Resolved once at
+/// startup from `all_font_names()`.
+struct UiFont(SharedString);
+impl Global for UiFont {}
 
 const MONO_CANDIDATES: &[&str] = &[
     "JetBrains Mono",
@@ -76,8 +77,8 @@ const MONO_CANDIDATES: &[&str] = &[
     "monospace",
 ];
 
-fn mono_family(cx: &App) -> SharedString {
-    cx.try_global::<MonoFamily>()
+fn ui_font(cx: &App) -> SharedString {
+    cx.try_global::<UiFont>()
         .map(|m| m.0.clone())
         .unwrap_or_else(|| SharedString::new_static(FONT))
 }
@@ -114,7 +115,7 @@ fn win_options(title: SharedString, w: f32, h: f32, cx: &mut App) -> WindowOptio
 /// fullscreen and close buttons.
 fn title_bar(
     id: &'static str,
-    theme: Theme,
+    theme: &Theme,
     title: SharedString,
     on_close: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
@@ -295,7 +296,7 @@ fn resize_strips(tiling: Tiling) -> Vec<impl IntoElement> {
 /// WPM slider (10–600): click or drag sets the value via `setter`.
 fn wpm_slider<T: 'static>(
     cx: &mut Context<T>,
-    theme: Theme,
+    theme: &Theme,
     wpm: u32,
     setter: fn(&mut T, u32, &mut Context<T>),
 ) -> impl IntoElement {
@@ -365,7 +366,7 @@ fn wpm_slider<T: 'static>(
 // ---------------------------------------------------------------------------
 
 struct LauncherView {
-    theme: Theme,
+    theme: &'static Theme,
     wpm: u32,
     path: Option<PathBuf>,
     error: Option<SharedString>,
@@ -374,7 +375,7 @@ struct LauncherView {
 }
 
 impl LauncherView {
-    fn new(theme: Theme, wpm: u32, cx: &mut Context<Self>) -> Self {
+    fn new(theme: &'static Theme, wpm: u32, cx: &mut Context<Self>) -> Self {
         Self {
             theme,
             wpm: wpm.max(1),
@@ -510,7 +511,7 @@ impl Render for LauncherView {
                             .py_1()
                             .border_1()
                             .border_color(border)
-                            .font_family(FONT)
+                            .font_family(ui_font(cx))
                             .child(path_label),
                     )
                     .child(
@@ -532,7 +533,7 @@ impl Render for LauncherView {
                     .items_center()
                     .gap_3()
                     .child(wpm_slider(cx, theme, self.wpm, Self::set_wpm))
-                    .child(div().font_family(FONT).child(format!("{} wpm", self.wpm))),
+                    .child(div().font_family(ui_font(cx)).child(format!("{} wpm", self.wpm))),
             )
             .child(
                 div()
@@ -542,7 +543,7 @@ impl Render for LauncherView {
                     .py_2()
                     .border_1()
                     .border_color(border)
-                    .font_family(FONT)
+                    .font_family(ui_font(cx))
                     .text_color(rgb_bytes(theme.pivot))
                     .on_click(cx.listener(|this, _e, _w, cx| this.run(cx)))
                     .child("▶ Run"),
@@ -550,7 +551,7 @@ impl Render for LauncherView {
             .when_some(self.error.clone(), |this, err| {
                 this.child(
                     div()
-                        .font_family(FONT)
+                        .font_family(ui_font(cx))
                         .text_color(rgb_bytes(theme.pivot))
                         .child(err),
                 )
@@ -571,7 +572,7 @@ struct ReaderView {
     source: PathBuf,
     playing: bool,
     wpm: u32,
-    theme: Theme,
+    theme: &'static Theme,
     title: SharedString,
     task: Task<()>,
     export: Task<()>,
@@ -586,7 +587,7 @@ impl ReaderView {
     fn new(
         text: String,
         source: PathBuf,
-        theme: Theme,
+        theme: &'static Theme,
         wpm: u32,
         title: SharedString,
         cx: &mut Context<Self>,
@@ -713,7 +714,7 @@ impl ReaderView {
                 .background_spawn(async move {
                     let result = std::fs::read_to_string(&source)
                         .map_err(Into::into)
-                        .and_then(|text| render::render_video(&text, &dest, wpm, &theme));
+                        .and_then(|text| render::render_video(&text, &dest, wpm, theme));
                     (dest, result)
                 })
                 .await;
@@ -802,7 +803,7 @@ impl Render for ReaderView {
         let before_len = pivot_byte;
         let after_len = word.len() - pivot_byte - pivot_len;
 
-        let fam = mono_family(cx);
+        let fam = ui_font(cx);
         let reader = {
             // The word is a slice of the book text; shaping needs an owned
             // SharedString, so this copies one word's bytes per frame.
@@ -1053,12 +1054,25 @@ fn main() {
     Application::new().run(move |cx: &mut App| {
         cx.set_global(TitleDrag(false));
         let names = cx.text_system().all_font_names();
-        let fam = MONO_CANDIDATES
+        let fam: SharedString = names
             .iter()
-            .find(|c| names.iter().any(|n| n == *c))
-            .map(|s| SharedString::new_static(*s))
-            .unwrap_or_else(|| SharedString::new_static("monospace"));
-        cx.set_global(MonoFamily(fam));
+            .find(|n| **n == theme.font)
+            .cloned()
+            .map(SharedString::from)
+            .unwrap_or_else(|| {
+                if theme.font != FONT {
+                    eprintln!(
+                        "warning: theme font {:?} not installed, using a monospace fallback",
+                        theme.font
+                    );
+                }
+                MONO_CANDIDATES
+                    .iter()
+                    .find(|c| names.iter().any(|n| n == *c))
+                    .map(|s| SharedString::new_static(*s))
+                    .unwrap_or_else(|| SharedString::new_static(FONT))
+            });
+        cx.set_global(UiFont(fam));
         match direct {
             Some((path, text)) => {
                 if frames(&text).next().is_none() {
@@ -1083,7 +1097,7 @@ fn main() {
             }
             None => {
                 let opts = win_options("Supersprinter".into(), 560., 360., cx);
-                cx.open_window(opts, |window, cx| {
+                cx.open_window(opts, move |window, cx| {
                     let view = cx.new(|cx| LauncherView::new(theme, wpm, cx));
                     view.focus_handle(cx).focus(window);
                     view
