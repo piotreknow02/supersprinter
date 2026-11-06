@@ -28,7 +28,7 @@ use gpui::{
     point, prelude::FluentBuilder, px, rgb, size,
 };
 
-use core::{Frame, Theme, build_frames, load_book, load_theme};
+use core::{Frame, FramePos, Theme, first_pos, frame_at, frames, load_book, load_theme, next_pos, seek_pos};
 
 const SLIDER_MIN: u32 = 10;
 const SLIDER_MAX: u32 = 600;
@@ -416,8 +416,8 @@ impl LauncherView {
             cx.notify();
             return;
         };
-        match load_book(&path).map(|t| build_frames(&t)) {
-            Ok(frames) if !frames.is_empty() => {
+        match load_book(&path) {
+            Ok(text) if frames(&text).next().is_some() => {
                 let theme = self.theme;
                 let wpm = self.wpm;
                 let stem = path
@@ -428,7 +428,7 @@ impl LauncherView {
                 let opts = win_options(title.clone(), 900., 500., cx);
                 let opened = cx.open_window(opts, move |window, cx| {
                     let view =
-                        cx.new(|cx| ReaderView::new(frames, path.clone(), theme, wpm, title, cx));
+                        cx.new(|cx| ReaderView::new(text, path.clone(), theme, wpm, title, cx));
                     view.focus_handle(cx).focus(window);
                     view
                 });
@@ -565,9 +565,10 @@ impl Render for LauncherView {
 // ---------------------------------------------------------------------------
 
 struct ReaderView {
-    frames: Vec<Frame>,
+    text: String,
+    pos: FramePos,
+    total: usize,
     source: PathBuf,
-    idx: usize,
     playing: bool,
     wpm: u32,
     theme: Theme,
@@ -583,17 +584,20 @@ struct ReaderView {
 
 impl ReaderView {
     fn new(
-        frames: Vec<Frame>,
+        text: String,
         source: PathBuf,
         theme: Theme,
         wpm: u32,
         title: SharedString,
         cx: &mut Context<Self>,
     ) -> Self {
+        let pos = first_pos(&text);
+        let total = frames(&text).count();
         let mut this = ReaderView {
-            frames,
+            text,
+            pos,
+            total,
             source,
-            idx: 0,
             playing: true,
             wpm: wpm.max(1),
             theme,
@@ -610,6 +614,11 @@ impl ReaderView {
         this
     }
 
+    /// The frame at the current position.
+    fn frame(&self) -> Option<Frame<'_>> {
+        frame_at(&self.text, self.pos)
+    }
+
     /// (Re)start the playback timer task; replacing the field cancels the old one.
     fn restart_task(&mut self, cx: &mut Context<Self>) {
         if !self.playing {
@@ -620,10 +629,13 @@ impl ReaderView {
             loop {
                 let delay = this
                     .read_with(cx, |v, _cx| {
-                        if !v.playing || v.idx + 1 >= v.frames.len() {
+                        if !v.playing || v.pos.idx + 1 >= v.total {
                             None
                         } else {
-                            Some(60_000u64 / v.wpm.max(1) as u64 * v.frames[v.idx].ticks as u64)
+                            Some(
+                                60_000u64 / v.wpm.max(1) as u64
+                                    * v.frame().map_or(1, |f| f.ticks) as u64,
+                            )
                         }
                     })
                     .unwrap_or(None);
@@ -634,9 +646,9 @@ impl ReaderView {
                         if !v.playing {
                             return false;
                         }
-                        v.idx += 1;
+                        v.pos = next_pos(&v.text, v.pos);
                         cx.notify();
-                        v.idx + 1 < v.frames.len()
+                        v.pos.idx + 1 < v.total
                     })
                     .unwrap_or(false);
                 if !keep_going {
@@ -653,8 +665,9 @@ impl ReaderView {
     }
 
     fn step(&mut self, delta: i64, cx: &mut Context<Self>) {
-        let len = self.frames.len() as i64;
-        self.idx = ((self.idx as i64 + delta).clamp(0, (len - 1).max(0))) as usize;
+        let target =
+            (self.pos.idx as i64 + delta).clamp(0, self.total.saturating_sub(1) as i64) as usize;
+        self.pos = seek_pos(&self.text, self.pos, target);
         self.restart_task(cx);
         cx.notify();
     }
@@ -771,9 +784,9 @@ impl Render for ReaderView {
             Decorations::Client { tiling } => Some(tiling),
             Decorations::Server => None,
         };
-        let frame = &self.frames[self.idx];
-        let word: &str = frame.word.as_deref().unwrap_or("");
-        let pivot = frame.pivot.min(word.chars().count().saturating_sub(1));
+        let frame = self.frame();
+        let word: &str = frame.and_then(|f| f.word).unwrap_or("");
+        let pivot = frame.map_or(0, |f| f.pivot).min(word.chars().count().saturating_sub(1));
 
         let text_c: gpui::Hsla = rgb_bytes(theme.text).into();
         let pivot_c: gpui::Hsla = rgb_bytes(theme.pivot).into();
@@ -791,9 +804,9 @@ impl Render for ReaderView {
 
         let fam = mono_family(cx);
         let reader = {
-            // Arc<str> -> SharedString is a refcount bump, not a copy.
-            let word_shape: SharedString =
-                frame.word.clone().map(SharedString::new).unwrap_or_default();
+            // The word is a slice of the book text; shaping needs an owned
+            // SharedString, so this copies one word's bytes per frame.
+            let word_shape: SharedString = SharedString::new(word);
             let font_family = fam.clone();
             canvas(
                 move |bounds, window, _cx| {
@@ -937,7 +950,7 @@ impl Render for ReaderView {
             });
 
         let play_label = if self.playing { "⏸ pause" } else { "▶ play" };
-        let progress = format!("{}/{}", self.idx + 1, self.frames.len());
+        let progress = format!("{}/{}", self.pos.idx + 1, self.total);
         let wpm_label = format!("{} wpm", self.wpm);
 
         // Controls at the top, directly under the titlebar.
@@ -1027,14 +1040,14 @@ fn main() {
     // With a file argument, go straight to the reader; otherwise open the
     // launcher window.
     let direct = cli.file.map(|path| {
-        let frames = match load_book(&path) {
-            Ok(text) => build_frames(&text),
+        let text = match load_book(&path) {
+            Ok(text) => text,
             Err(e) => {
                 eprintln!("error: {e:#}");
                 std::process::exit(1);
             }
         };
-        (path, frames)
+        (path, text)
     });
 
     Application::new().run(move |cx: &mut App| {
@@ -1047,8 +1060,8 @@ fn main() {
             .unwrap_or_else(|| SharedString::new_static("monospace"));
         cx.set_global(MonoFamily(fam));
         match direct {
-            Some((path, frames)) => {
-                if frames.is_empty() {
+            Some((path, text)) => {
+                if frames(&text).next().is_none() {
                     eprintln!("error: no words found in {}", path.display());
                     std::process::exit(1);
                 }
@@ -1061,7 +1074,7 @@ fn main() {
                 let opts = win_options(title.clone(), 900., 500., cx);
                 cx.open_window(opts, move |window, cx| {
                     let view = cx.new(|cx| {
-                        ReaderView::new(frames, path, theme_for_view, wpm, title, cx)
+                        ReaderView::new(text, path, theme_for_view, wpm, title, cx)
                     });
                     view.focus_handle(cx).focus(window);
                     view

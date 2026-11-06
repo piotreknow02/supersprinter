@@ -14,7 +14,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use core::{Frame, Theme, build_frames, load_book, load_theme};
+use core::{Frame, Theme, first_pos, frame_at, frames, load_book, load_theme, next_pos, seek_pos};
 
 #[derive(Parser)]
 #[command(version = env!("CARGO_PKG_VERSION"))]
@@ -62,7 +62,7 @@ fn to_color(rgb: core::Rgb) -> Color {
 
 fn draw(
     tui: &mut TuiFrame,
-    frame: &Frame,
+    frame: &Frame<'_>,
     theme: &Theme,
     wpm: u32,
     idx: usize,
@@ -84,7 +84,7 @@ fn draw(
         ])
         .split(area);
 
-    let word: &str = frame.word.as_deref().unwrap_or("");
+    let word: &str = frame.word.unwrap_or("");
     let pivot = frame.pivot;
 
     // Pad so the pivot glyph lands on center_col; words too wide start at 0.
@@ -137,21 +137,21 @@ fn draw(
 
 fn read_terminal(path: &Path, mut wpm: u32, theme: &Theme) -> Result<()> {
     let text = load_book(path)?;
-    let frames = build_frames(&text);
-    if frames.is_empty() {
+    let total = frames(&text).count();
+    if total == 0 {
         anyhow::bail!("no words found in {}", path.display());
     }
 
     let mut terminal = ratatui::init();
     let _guard = TermGuard;
 
-    let mut idx: usize = 0;
+    let mut pos = first_pos(&text);
     let mut playing = true;
     let mut quit = false;
 
     while !quit {
-        let frame = &frames[idx];
-        terminal.draw(|tui| draw(tui, frame, theme, wpm, idx, frames.len(), !playing))?;
+        let Some(frame) = frame_at(&text, pos) else { break };
+        terminal.draw(|tui| draw(tui, &frame, theme, wpm, pos.idx, total, !playing))?;
 
         let tick_ms = 60_000 / wpm.max(1) * frame.ticks;
         let timeout = if playing { Some(Duration::from_millis(tick_ms as u64)) } else { None };
@@ -161,10 +161,10 @@ fn read_terminal(path: &Path, mut wpm: u32, theme: &Theme) -> Result<()> {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => quit = true,
                     KeyCode::Char(' ') => playing = !playing,
-                    KeyCode::Left => idx = idx.saturating_sub(1),
+                    KeyCode::Left => pos = seek_pos(&text, pos, pos.idx.saturating_sub(1)),
                     KeyCode::Right => {
-                        if idx + 1 < frames.len() {
-                            idx += 1;
+                        if pos.idx + 1 < total {
+                            pos = next_pos(&text, pos);
                         } else {
                             quit = true;
                         }
@@ -178,8 +178,8 @@ fn read_terminal(path: &Path, mut wpm: u32, theme: &Theme) -> Result<()> {
             }
         } else if playing {
             // Timeout: advance to the next frame; end of stream exits 0.
-            if idx + 1 < frames.len() {
-                idx += 1;
+            if pos.idx + 1 < total {
+                pos = next_pos(&text, pos);
             } else {
                 quit = true;
             }

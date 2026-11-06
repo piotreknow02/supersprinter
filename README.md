@@ -9,7 +9,7 @@ MP4 renderer.
 
 | Crate | What it is |
 |---|---|
-| `crates/core` | No-UI logic: book loading (`load_book`), frame generation (`build_frames` — pivot at ~30% of the word, Glance-style pacing: extra ticks after sentence ends, commas, long words), theme loading from TOML. |
+| `crates/core` | No-UI logic: book loading (`load_book`), frame generation (`frames` — a lazy, allocation-free view over the text: pivot at ~30% of the word, Glance-style pacing: extra ticks after sentence ends, commas, long words; `first_pos`/`frame_at`/`next_pos`/`seek_pos` give readers a seekable cursor without materializing the stream), theme loading from TOML. |
 | `crates/render` | Renders each frame to an RGBA image (ab_glyph + image) and encodes 1280×720/24fps MP4 via libx264 (ffmpeg-next). |
 | `crates/cli` | `supersprinter-cli`: ratatui terminal reader (`supersprinter-cli book.txt 300`) plus `supersprinter-cli render book.txt [out.mp4] [wpm]`. |
 | `crates/gui` | `supersprinter-gui`: gpui desktop app. Launcher window (file picker, WPM slider, Run) and reader window (canvas-rendered word with ▼/▲ pivot markers, play/pause, slider + numeric WPM input, progress). Client-side window decorations with working close/minimize/fullscreen and edge resize. |

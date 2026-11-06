@@ -5,7 +5,7 @@ use std::path::Path;
 
 use ab_glyph::{Font, FontArc, PxScale, ScaleFont};
 use anyhow::{Context as _, Result, bail};
-use core::{Frame, Theme, build_frames};
+use core::{Frame, Theme, frames};
 use ffmpeg_next as ffmpeg;
 use ffmpeg::format::Pixel;
 use ffmpeg::software::scaling::{context::Context as Scaler, flag::Flags};
@@ -46,12 +46,12 @@ fn video_frames_for(ticks: u32, wpm: u32) -> u32 {
 }
 
 /// Draw one RSVP frame (background + word + pivot highlight + arrows).
-fn draw_frame(img: &mut RgbaImage, frame: &Frame, font: &FontArc, theme: &Theme) {
+fn draw_frame(img: &mut RgbaImage, frame: &Frame<'_>, font: &FontArc, theme: &Theme) {
     let bg = Rgba([theme.background[0], theme.background[1], theme.background[2], 255]);
     for px in img.pixels_mut() {
         *px = bg;
     }
-    let Some(word) = &frame.word else {
+    let Some(word) = frame.word else {
         return;
     };
 
@@ -139,7 +139,6 @@ fn blend(dst: &mut Rgba<u8>, color: Rgba<u8>, coverage: f32) {
 pub fn render_video(book_text: &str, out: &Path, wpm: u32, theme: &Theme) -> Result<()> {
     anyhow::ensure!(wpm > 0, "wpm must be positive");
     let font = load_font()?;
-    let frames = build_frames(book_text);
 
     ffmpeg::init().map_err(|e| anyhow::anyhow!("ffmpeg init failed: {e}"))?;
 
@@ -196,8 +195,8 @@ pub fn render_video(book_text: &str, out: &Path, wpm: u32, theme: &Theme) -> Res
     let mut packet = Packet::empty();
     let mut pts: i64 = 0;
 
-    for frame in &frames {
-        draw_frame(&mut img, frame, &font, theme);
+    for frame in frames(book_text) {
+        draw_frame(&mut img, &frame, &font, theme);
         {
             // Copy RGBA image into the ffmpeg frame (stride may differ).
             let stride = rgba.stride(0);
