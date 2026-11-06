@@ -1,31 +1,32 @@
 //! gpui RSVP reader: launcher window (file picker + WPM slider + Run) and a
 //! reader window with pivot markers, WPM slider and free numeric input.
 //!
-//! Both windows use client-side decorations (like Zed/zaku): gpui's Wayland
-//! backend echoes whatever decoration mode we request, so requesting Server
-//! on GNOME yields a window with no titlebar at all. We request Client and
-//! paint our own titlebar (close / minimize / fullscreen, drag-to-move,
-//! double-click to zoom). Edge resizing is not handled; it awaits a gpui
-//! builtin.
+//! Both windows are client-side decorated and use the gpui-kit `TitleBar`
+//! (drag-to-move, double-click zoom, minimize / maximize / close); a ghost
+//! button in the bar toggles fullscreen.
 //!
 //! The reader area is a single `canvas`: the word is shaped with the pivot
 //! glyph centered on the viewport midline, and the ▼/▲ markers are painted as
 //! filled triangles at exactly that glyph's x — so markers and letters can
 //! never drift apart. Font size scales with the viewport.
 
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::time::Duration;
 
 use clap::Parser;
 use gpui::{
-    App, AppContext, Application, Bounds, Context, Decorations, FocusHandle,
-    Focusable, Global, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, PathBuilder, PathPromptOptions, Pixels, Render,
-    StatefulInteractiveElement, Styled, SharedString, Task, TextRun, Timer, TitlebarOptions,
-    Window, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions, canvas, div, font,
-    point, prelude::FluentBuilder, px, size,
+    App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, Global, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, PathBuilder, PathPromptOptions, Pixels, Render,
+    StatefulInteractiveElement, Styled, SharedString, Subscription, Task, TextAlign, TextRun, Window,
+    WindowBounds, WindowDecorations, WindowOptions, canvas, div, font, point,
+    prelude::FluentBuilder, px, size,
+};
+use gpui_kit::assets::{AllAssets, IconName};
+use gpui_kit::component::{
+    Disableable, Theme as KitTheme, ThemeMode, TitleBar,
+    button::{Button, ButtonVariants},
+    input::{InputEvent, InputState, NumberInput},
+    slider::{Slider, SliderEvent, SliderState},
 };
 
 use core::{Frame, FramePos, Theme, first_pos, frame_at, frames, load_book, load_theme, next_pos, seek_pos};
@@ -33,8 +34,6 @@ use core::{Frame, FramePos, Theme, first_pos, frame_at, frames, load_book, load_
 const SLIDER_MIN: u32 = 10;
 const SLIDER_MAX: u32 = 600;
 const FONT: &str = core::DEFAULT_FONT;
-/// Height of the client-side titlebar.
-const BAR_H: f32 = 34.;
 
 #[derive(Parser)]
 #[command(name = "supersprinter-gui", about = "RSVP speed reader")]
@@ -54,11 +53,6 @@ fn rgb_bytes(c: core::Rgb) -> gpui::Rgba {
         a: 1.0,
     }
 }
-
-/// True while a titlebar drag is armed (mouse down on the titlebar, waiting
-/// for movement to hand the move to the compositor).
-struct TitleDrag(bool);
-impl Global for TitleDrag {}
 
 /// The font family actually used, resolved once at startup by
 /// [`core::resolve_font`] (fontdb): the theme's `font` when it is installed,
@@ -85,16 +79,17 @@ fn close_window(window: &mut Window, cx: &mut App) {
 }
 
 fn win_options(title: SharedString, w: f32, h: f32, cx: &mut App) -> WindowOptions {
+    let mut titlebar = TitleBar::title_bar_options();
+    titlebar.title = Some(title);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
             size(px(w), px(h)),
             cx,
         ))),
-        titlebar: Some(TitlebarOptions {
-            title: Some(title),
-            ..Default::default()
-        }),
+        titlebar: Some(titlebar),
+        // TitleBar only paints its min/max/close under client-side
+        // decorations; gpui's Wayland backend echoes whatever mode we ask for.
         window_decorations: Some(WindowDecorations::Client),
         is_resizable: true,
         is_movable: true,
@@ -103,168 +98,23 @@ fn win_options(title: SharedString, w: f32, h: f32, cx: &mut App) -> WindowOptio
     }
 }
 
-/// Client-side titlebar: drag area (move, double-click zoom) + minimize,
-/// fullscreen and close buttons.
-fn title_bar(
-    id: &'static str,
+/// gpui-kit titlebar themed to the app: title text only; minimize /
+/// maximize / close come from TitleBar itself.
+fn app_title_bar(
     theme: &Theme,
     title: SharedString,
     on_close: impl Fn(&mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let border = rgb_bytes(theme.arrows);
-    let text = rgb_bytes(theme.text);
-    div()
-        .id(id)
-        .flex_none()
-        .h(px(BAR_H))
-        .flex()
-        .flex_row()
-        .items_center()
+) -> TitleBar {
+    TitleBar::new()
+        .on_close_window(move |_e, w, cx| on_close(w, cx))
         .bg(rgb_bytes(theme.background))
-        .border_b_1()
-        .border_color(border)
-        .window_control_area(WindowControlArea::Drag)
+        .border_color(rgb_bytes(theme.arrows))
         .child(
             div()
-                .id("tb-drag")
                 .flex_1()
-                .h_full()
-                .flex()
-                .items_center()
-                .pl_3()
-                .text_color(text)
-                .child(title)
-                .on_mouse_down(MouseButton::Left, |_e, _w, cx| {
-                    cx.set_global(TitleDrag(true));
-                })
-                .on_mouse_move(|_e, window, cx| {
-                    if cx.try_global::<TitleDrag>().is_some_and(|g| g.0) {
-                        cx.set_global(TitleDrag(false));
-                        window.start_window_move();
-                    }
-                })
-                .on_mouse_up(MouseButton::Left, |_e, _w, cx| {
-                    cx.set_global(TitleDrag(false));
-                })
-                .on_click(|e, window, _cx| {
-                    if e.click_count() == 2 {
-                        window.zoom_window();
-                    }
-                }),
+                .text_color(rgb_bytes(theme.text))
+                .child(title),
         )
-        .child(
-            div()
-                .id("tb-min")
-                .cursor_pointer()
-                .px_3()
-                .h_full()
-                .flex()
-                .items_center()
-                .text_color(text)
-                .child("—")
-                .on_click(|_e, window, cx| {
-                    cx.stop_propagation();
-                    window.minimize_window();
-                }),
-        )
-        .child(
-            div()
-                .id("tb-fs")
-                .cursor_pointer()
-                .px_3()
-                .h_full()
-                .flex()
-                .items_center()
-                .text_color(text)
-                .child("☐")
-                .on_click(|_e, window, cx| {
-                    cx.stop_propagation();
-                    window.toggle_fullscreen();
-                }),
-        )
-        .child(
-            div()
-                .id("tb-close")
-                .cursor_pointer()
-                .px_3()
-                .h_full()
-                .flex()
-                .items_center()
-                .text_color(text)
-                .child("✕")
-                .on_click(move |_e, window, cx| {
-                    cx.stop_propagation();
-                    on_close(window, cx);
-                }),
-        )
-}
-
-/// WPM slider (10–600): click or drag sets the value via `setter`.
-fn wpm_slider<T: 'static>(
-    cx: &mut Context<T>,
-    theme: &Theme,
-    wpm: u32,
-    setter: fn(&mut T, u32, &mut Context<T>),
-) -> impl IntoElement {
-    let cell: Rc<RefCell<Option<Bounds<Pixels>>>> = Rc::new(RefCell::new(None));
-    let for_prepaint = cell.clone();
-    let frac = (wpm.min(SLIDER_MAX) as f32 - SLIDER_MIN as f32)
-        / (SLIDER_MAX - SLIDER_MIN) as f32;
-    let track_color = rgb_bytes(theme.arrows);
-    let thumb_color = rgb_bytes(theme.text);
-
-    div()
-        .id("wpm-slider")
-        .w(px(240.))
-        .h(px(20.))
-        .child(
-            canvas(
-                move |bounds, _window, _cx| {
-                    *for_prepaint.borrow_mut() = Some(bounds);
-                    (bounds, frac, track_color, thumb_color)
-                },
-                move |_bounds, (b, f, track_c, thumb_c), window, _cx| {
-                    let track = Bounds {
-                        origin: point(b.origin.x, b.origin.y + px(9.)),
-                        size: size(b.size.width, px(2.)),
-                    };
-                    window.paint_quad(gpui::fill(track, track_c));
-                    let thumb_x = b.origin.x + b.size.width * f.clamp(0., 1.);
-                    window.paint_quad(gpui::fill(
-                        Bounds {
-                            origin: point(thumb_x - px(6.), b.origin.y + px(4.)),
-                            size: size(px(12.), px(12.)),
-                        },
-                        thumb_c,
-                    ));
-                },
-            )
-            .size_full(),
-        )
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener({
-                let cell = cell.clone();
-                move |this, e: &MouseDownEvent, _w, cx| {
-                    let Some(b) = *cell.borrow() else { return };
-                    let frac = ((e.position.x - b.origin.x) / b.size.width).clamp(0., 1.);
-                    let w = (SLIDER_MIN as f32 + frac * (SLIDER_MAX - SLIDER_MIN) as f32).round() as u32;
-                    setter(this, w, cx);
-                }
-            }),
-        )
-        .on_mouse_move(cx.listener({
-            let cell = cell.clone();
-            move |this, e: &MouseMoveEvent, _w, cx| {
-                if e.pressed_button != Some(MouseButton::Left) {
-                    return;
-                }
-                let Some(b) = *cell.borrow() else { return };
-                let frac = ((e.position.x - b.origin.x) / b.size.width).clamp(0., 1.);
-                let w = (SLIDER_MIN as f32 + frac * (SLIDER_MAX - SLIDER_MIN) as f32).round() as u32;
-                setter(this, w, cx);
-            }
-        }))
 }
 
 // ---------------------------------------------------------------------------
@@ -278,17 +128,34 @@ struct LauncherView {
     error: Option<SharedString>,
     focus: FocusHandle,
     picker: Task<()>,
+    slider: Entity<SliderState>,
+    _slider_sub: Subscription,
 }
 
 impl LauncherView {
     fn new(theme: &'static Theme, wpm: u32, cx: &mut Context<Self>) -> Self {
+        let slider = cx.new(|_| {
+            SliderState::new()
+                .min(SLIDER_MIN as f32)
+                .max(SLIDER_MAX as f32)
+                .step(1.0)
+                .default_value(wpm.max(1).clamp(SLIDER_MIN, SLIDER_MAX) as f32)
+        });
+        let wpm = wpm.max(1);
+        let _slider_sub = cx.subscribe(&slider, |this, _, ev: &SliderEvent, cx| {
+            if let SliderEvent::Change(v) = ev {
+                this.set_wpm(v.start() as u32, cx);
+            }
+        });
         Self {
             theme,
-            wpm: wpm.max(1),
+            wpm,
             path: None,
             error: None,
             focus: cx.focus_handle(),
             picker: Task::ready(()),
+            slider,
+            _slider_sub,
         }
     }
 
@@ -333,10 +200,11 @@ impl LauncherView {
                     .unwrap_or_else(|| path.display().to_string());
                 let title: SharedString = format!("Supersprinter — {stem}").into();
                 let opts = win_options(title.clone(), 900., 500., cx);
-                let opened = cx.open_window(opts, move |window, cx| {
-                    let view =
-                        cx.new(|cx| ReaderView::new(text, path.clone(), theme, wpm, title, cx));
-                    view.focus_handle(cx).focus(window);
+                let opened = gpui_kit::open_window(opts, cx, move |window, cx| {
+                    let view = cx.new(|cx| {
+                        ReaderView::new(window, text, path.clone(), theme, wpm, title, cx)
+                    });
+                    view.focus_handle(cx).focus(window, cx);
                     view
                 });
                 if opened.is_err() {
@@ -359,9 +227,8 @@ impl Focusable for LauncherView {
 }
 
 impl Render for LauncherView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
-        let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
 
         let mut root = div()
             .id("launcher")
@@ -374,7 +241,7 @@ impl Render for LauncherView {
                     _ => {}
                 }
             }))
-            .on_click(cx.listener(|this, _e, window, _cx| this.focus.focus(window)))
+            .on_click(cx.listener(|this, _e, window, cx| this.focus.focus(window, cx)))
             .size_full()
             .relative()
             .flex()
@@ -382,9 +249,7 @@ impl Render for LauncherView {
             .bg(rgb_bytes(theme.background))
             .text_color(rgb_bytes(theme.text));
 
-        if client_decorated {
-            root = root.child(title_bar("launcher-titlebar", theme, "Supersprinter".into(), close_window));
-        }
+        root = root.child(app_title_bar(theme, "Supersprinter".into(), close_window));
 
         let path_label = match &self.path {
             Some(p) => p.display().to_string(),
@@ -415,15 +280,9 @@ impl Render for LauncherView {
                             .child(path_label),
                     )
                     .child(
-                        div()
-                            .id("browse")
-                            .cursor_pointer()
-                            .px_3()
-                            .py_1()
-                            .border_1()
-                            .border_color(border)
-                            .on_click(cx.listener(|this, _e, _w, cx| this.browse(cx)))
-                            .child("Browse…"),
+                        Button::new("browse")
+                            .label("Browse…")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.browse(cx))),
                     ),
             )
             .child(
@@ -432,21 +291,14 @@ impl Render for LauncherView {
                     .flex_row()
                     .items_center()
                     .gap_3()
-                    .child(wpm_slider(cx, theme, self.wpm, Self::set_wpm))
+                    .child(div().w(px(240.)).child(Slider::new(&self.slider).w_full()))
                     .child(div().font_family(ui_font(cx)).child(format!("{} wpm", self.wpm))),
             )
             .child(
-                div()
-                    .id("run")
-                    .cursor_pointer()
-                    .px_6()
-                    .py_2()
-                    .border_1()
-                    .border_color(border)
-                    .font_family(ui_font(cx))
-                    .text_color(rgb_bytes(theme.pivot))
-                    .on_click(cx.listener(|this, _e, _w, cx| this.run(cx)))
-                    .child("▶ Run"),
+                    Button::new("run")
+                        .primary()
+                        .label("▶ Run")
+                        .on_click(cx.listener(|this, _e, _w, cx| this.run(cx))),
             )
             .when_some(self.error.clone(), |this, err| {
                 this.child(
@@ -479,12 +331,14 @@ struct ReaderView {
     exporting: bool,
     export_msg: Option<SharedString>,
     root_focus: FocusHandle,
-    input_focus: FocusHandle,
-    wpm_buf: String,
+    slider: Entity<SliderState>,
+    wpm_input: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ReaderView {
     fn new(
+        window: &mut Window,
         text: String,
         source: PathBuf,
         theme: &'static Theme,
@@ -494,13 +348,47 @@ impl ReaderView {
     ) -> Self {
         let pos = first_pos(&text);
         let total = frames(&text).count();
+        let wpm = wpm.max(1);
+        let slider = cx.new(|_| {
+            SliderState::new()
+                .min(SLIDER_MIN as f32)
+                .max(SLIDER_MAX as f32)
+                .step(1.0)
+                .default_value(wpm.clamp(SLIDER_MIN, SLIDER_MAX) as f32)
+        });
+        let wpm_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("wpm")
+                .default_value(wpm.to_string())
+                .min(1.)
+                .max(4000.)
+                .step(25.)
+        });
+        let mut subscriptions = Vec::new();
+        subscriptions.push(cx.subscribe_in(&slider, window, |this, _, ev, window, cx| {
+            if let SliderEvent::Change(v) = ev {
+                this.set_wpm(v.start() as u32, window, cx);
+            }
+        }));
+        subscriptions.push(
+            cx.subscribe_in(&wpm_input, window, |this, state, ev, window, cx| {
+                if matches!(ev, InputEvent::Change) {
+                    if let Ok(v) = state.read(cx).value().parse::<u32>() {
+                        if (1..=4000).contains(&v) {
+                            // NOT set_wpm: never echo into the box while typing.
+                            this.apply_wpm(v, window, cx);
+                        }
+                    }
+                }
+            }),
+        );
         let mut this = ReaderView {
             text,
             pos,
             total,
             source,
             playing: true,
-            wpm: wpm.max(1),
+            wpm,
             theme,
             title,
             task: Task::ready(()),
@@ -508,8 +396,9 @@ impl ReaderView {
             exporting: false,
             export_msg: None,
             root_focus: cx.focus_handle(),
-            input_focus: cx.focus_handle(),
-            wpm_buf: String::new(),
+            slider,
+            wpm_input,
+            _subscriptions: subscriptions,
         };
         this.restart_task(cx);
         this
@@ -526,6 +415,7 @@ impl ReaderView {
             self.task = Task::ready(());
             return;
         }
+        let executor = cx.background_executor().clone();
         self.task = cx.spawn(async move |this, cx| {
             loop {
                 let delay = this
@@ -541,7 +431,7 @@ impl ReaderView {
                     })
                     .unwrap_or(None);
                 let Some(ms) = delay else { break };
-                Timer::after(Duration::from_millis(ms)).await;
+                executor.timer(Duration::from_millis(ms)).await;
                 let keep_going = this
                     .update(cx, |v, cx| {
                         if !v.playing {
@@ -573,10 +463,25 @@ impl ReaderView {
         cx.notify();
     }
 
-    fn set_wpm(&mut self, wpm: u32, cx: &mut Context<Self>) {
+    /// Commit a new wpm: state + timer + slider sync. Never touches the
+    /// number input (that would echo typing back into the box).
+    fn apply_wpm(&mut self, wpm: u32, window: &mut Window, cx: &mut Context<Self>) {
         self.wpm = wpm.clamp(1, 4000);
         self.restart_task(cx);
+        let target = self.wpm.clamp(SLIDER_MIN, SLIDER_MAX) as f32;
+        if self.slider.read(cx).value().start() != target {
+            self.slider.update(cx, |s, cx| s.set_value(target, window, cx));
+        }
         cx.notify();
+    }
+
+    /// Commit + mirror the value into the number box (slider + +/- keys).
+    fn set_wpm(&mut self, wpm: u32, window: &mut Window, cx: &mut Context<Self>) {
+        self.apply_wpm(wpm, window, cx);
+        let text = self.wpm.to_string();
+        if self.wpm_input.read(cx).value().to_string() != text {
+            self.wpm_input.update(cx, |s, cx| s.set_value(text, window, cx));
+        }
     }
 
     /// Opens a save dialog and renders the current book to mp4 at the
@@ -637,38 +542,10 @@ impl ReaderView {
             "left" => self.step(-1, cx),
             "right" => self.step(1, cx),
             "q" | "escape" => close_window(w, cx),
-            "+" | "=" => self.set_wpm((self.wpm + 25).min(1200), cx),
-            "-" | "_" => self.set_wpm(self.wpm.saturating_sub(25).max(20), cx),
+            "+" | "=" => self.set_wpm((self.wpm + 25).min(1200), w, cx),
+            "-" | "_" => self.set_wpm(self.wpm.saturating_sub(25).max(20), w, cx),
             _ => {}
         }
-    }
-
-    fn on_input_key(&mut self, e: &KeyDownEvent, _w: &mut Window, cx: &mut Context<Self>) {
-        let key = e.keystroke.key.as_str();
-        match key {
-            "backspace" => {
-                self.wpm_buf.pop();
-            }
-            "enter" => {
-                if let Ok(v) = self.wpm_buf.parse::<u32>() {
-                    self.set_wpm(v, cx);
-                }
-                self.wpm_buf.clear();
-            }
-            _ => {
-                if let Some(c) = e.keystroke.key_char.as_deref()
-                    && c.len() == 1
-                    && c.chars().next().unwrap().is_ascii_digit()
-                    && self.wpm_buf.len() < 4
-                {
-                    self.wpm_buf.push_str(c);
-                }
-            }
-        }
-        // Never let keystrokes typed into the WPM box reach the reader
-        // context (space would otherwise toggle play while typing a number).
-        cx.stop_propagation();
-        cx.notify();
     }
 }
 
@@ -679,9 +556,8 @@ impl Focusable for ReaderView {
 }
 
 impl Render for ReaderView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
-        let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
         let frame = self.frame();
         let word: &str = frame.and_then(|f| f.word).unwrap_or("");
         let pivot = frame.map_or(0, |f| f.pivot).min(word.chars().count().saturating_sub(1));
@@ -794,7 +670,7 @@ impl Render for ReaderView {
                     let mid_x = bounds.origin.x + bounds.size.width / 2.;
                     let origin_x = mid_x - pivot_center;
                     let origin_y = bounds.origin.y + (bounds.size.height - line_height) / 2.;
-                    let _ = line.paint(point(origin_x, origin_y), line_height, window, cx);
+                    let _ = line.paint(point(origin_x, origin_y), line_height, TextAlign::Left, None, window, cx);
                     let pivot_x = origin_x + pivot_center;
 
                     let gap = px(6.);
@@ -823,79 +699,87 @@ impl Render for ReaderView {
             .flex_1()
         };
 
+        // The guard div is REQUIRED: keys typed in the box (space, q, +/-)
+        // would otherwise bubble to the reader root's key context and toggle
+        // play, close the window, or step wpm. The focused NumberInput sits
+        // deeper and receives keys first; the guard only stops the bubble.
         let input = div()
-            .id("wpm-input")
-            .track_focus(&self.input_focus)
+            .id("wpm-input-guard")
             .key_context("wpm-input")
-            .on_key_down(cx.listener(Self::on_input_key))
-            .on_click(cx.listener(|this, _e, window, cx| {
-                // Without this the root div's bubbling on_click refocuses
-                // root_focus and the input loses focus immediately.
-                cx.stop_propagation();
-                this.input_focus.focus(window);
-            }))
-            .px_2()
-            .py_1()
-            .border_1()
-            .border_color(rgb_bytes(theme.arrows))
-            .text_size(px(16.))
-            .text_color(rgb_bytes(theme.text))
-            .font_family(fam.clone())
-            .child(if self.wpm_buf.is_empty() {
-                "type wpm…".into()
-            } else {
-                format!("{}▏", self.wpm_buf)
-            });
+            .on_key_down(|_e, _w, cx| cx.stop_propagation())
+            .w(px(120.))
+            .child(
+                NumberInput::new(&self.wpm_input)
+                    .accessibility_label("Words per minute"),
+            );
 
-        let play_label = if self.playing { "⏸ pause" } else { "▶ play" };
+        let play_label = if self.playing { "pause" } else { "play" };
         let progress = format!("{}/{}", self.pos.idx + 1, self.total);
         let wpm_label = format!("{} wpm", self.wpm);
 
-        // Controls at the top, directly under the titlebar.
+        // Controls at the top, directly under the titlebar: playback on the
+        // left, speed controls on the right.
         let controls = div()
             .flex_none()
             .flex()
             .flex_row()
             .items_center()
-            .gap_4()
+            .justify_between()
             .p_3()
             .text_color(rgb_bytes(theme.text))
             .child(
                 div()
-                    .id("play-toggle")
-                    .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .border_1()
-                    .border_color(rgb_bytes(theme.arrows))
-                    .on_click(cx.listener(|this, _, _w, cx| this.set_playing(!this.playing, cx)))
-                    .child(play_label),
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_4()
+                    .child(
+                        Button::new("play-toggle")
+                            .icon(if self.playing {
+                                IconName::Pause
+                            } else {
+                                IconName::Play
+                            })
+                            // Fixed-width label sized for "pause" (the longer
+                            // word) so the button never resizes on flip.
+                            .child(div().w(px(48.)).child(play_label))
+                            .on_click(cx.listener(|this, _, _w, cx| {
+                                this.set_playing(!this.playing, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("export-mp4")
+                            .icon(if self.exporting {
+                                IconName::LoaderCircle
+                            } else {
+                                IconName::Download
+                            })
+                            .label(if self.exporting {
+                                "exporting…"
+                            } else {
+                                "export mp4"
+                            })
+                            .disabled(self.exporting)
+                            .on_click(cx.listener(|this, _, _w, cx| this.export_mp4(cx))),
+                    )
+                    .child(
+                        self.export_msg
+                            .as_ref()
+                            .map(|m| div().text_color(rgb_bytes(theme.arrows)).child(m.clone()))
+                            .unwrap_or_else(|| div()),
+                    ),
             )
             .child(
                 div()
-                    .id("export-mp4")
-                    .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .border_1()
-                    .border_color(rgb_bytes(theme.arrows))
-                    .on_click(cx.listener(|this, _, _w, cx| this.export_mp4(cx)))
-                    .child(if self.exporting {
-                        "⏳ exporting…"
-                    } else {
-                        "⬇ export mp4"
-                    }),
-            )
-            .child(
-                self.export_msg
-                    .as_ref()
-                    .map(|m| div().text_color(rgb_bytes(theme.arrows)).child(m.clone()))
-                    .unwrap_or_else(|| div()),
-            )
-            .child(wpm_slider(cx, theme, self.wpm, Self::set_wpm))
-            .child(input)
-            .child(div().child(wpm_label))
-            .child(div().child(progress));
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_4()
+                    .child(div().w(px(240.)).child(Slider::new(&self.slider).w_full()))
+                    .child(input)
+                    .child(div().child(wpm_label))
+                    .child(div().child(progress)),
+            );
 
         let mut root = div()
             .id("root")
@@ -907,16 +791,12 @@ impl Render for ReaderView {
             .bg(rgb_bytes(theme.background))
             .flex()
             .flex_col()
-            .on_click(cx.listener(|this, _e, window, _cx| {
-                this.root_focus.focus(window);
+            .on_click(cx.listener(|this, _e, window, cx| {
+                this.root_focus.focus(window, cx);
             }));
 
-        if client_decorated {
-            let title = self.title.clone();
-            root = root.child(title_bar("reader-titlebar", theme, title, |w, cx| {
-                close_window(w, cx);
-            }));
-        }
+        let title = self.title.clone();
+        root = root.child(app_title_bar(theme, title, |w, cx| close_window(w, cx)));
 
         root.child(controls).child(reader)
     }
@@ -945,55 +825,70 @@ fn main() {
         (path, text)
     });
 
-    Application::new().run(move |cx: &mut App| {
-        cx.set_global(TitleDrag(false));
-        let fam: SharedString = match core::resolve_font(&theme) {
-            Ok(r) => {
-                if r.fell_back && theme.font != FONT {
-                    eprintln!(
-                        "warning: theme font {:?} not installed, using {:?}",
-                        theme.font, r.family
-                    );
+    gpui_kit::application()
+        .with_assets(AllAssets)
+        .run(move |cx: &mut App| {
+            gpui_kit::init(cx);
+            let fam: SharedString = match core::resolve_font(&theme) {
+                Ok(r) => {
+                    if r.fell_back && theme.font != FONT {
+                        eprintln!(
+                            "warning: theme font {:?} not installed, using {:?}",
+                            theme.font, r.family
+                        );
+                    }
+                    r.family.into()
                 }
-                r.family.into()
-            }
-            Err(e) => {
-                eprintln!("error: {e:#}");
-                std::process::exit(1);
-            }
-        };
-        cx.set_global(UiFont(fam));
-        match direct {
-            Some((path, text)) => {
-                if frames(&text).next().is_none() {
-                    eprintln!("error: no words found in {}", path.display());
+                Err(e) => {
+                    eprintln!("error: {e:#}");
                     std::process::exit(1);
                 }
-                let stem = path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.display().to_string());
-                let title: SharedString = format!("Supersprinter — {stem}").into();
-                let theme_for_view = theme;
-                let opts = win_options(title.clone(), 900., 500., cx);
-                cx.open_window(opts, move |window, cx| {
-                    let view = cx.new(|cx| {
-                        ReaderView::new(text, path, theme_for_view, wpm, title, cx)
-                    });
-                    view.focus_handle(cx).focus(window);
-                    view
-                })
-                .expect("failed to open window");
+            };
+            cx.set_global(UiFont(fam.clone()));
+            // Map the app's TOML theme onto the gpui-kit theme so the
+            // components (titlebar, slider, buttons, input) match the reader.
+            let lum = (0.2126 * theme.background[0] as f32
+                + 0.7152 * theme.background[1] as f32
+                + 0.0722 * theme.background[2] as f32)
+                / 255.0;
+            KitTheme::update(cx, |t| {
+                t.mode = if lum < 0.5 { ThemeMode::Dark } else { ThemeMode::Light };
+                t.colors.background = rgb_bytes(theme.background).into();
+                t.colors.foreground = rgb_bytes(theme.text).into();
+                t.colors.primary = rgb_bytes(theme.pivot).into();
+                t.colors.border = rgb_bytes(theme.arrows).into();
+                t.font_family = fam.clone();
+            });
+            match direct {
+                Some((path, text)) => {
+                    if frames(&text).next().is_none() {
+                        eprintln!("error: no words found in {}", path.display());
+                        std::process::exit(1);
+                    }
+                    let stem = path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
+                    let title: SharedString = format!("Supersprinter — {stem}").into();
+                    let opts = win_options(title.clone(), 900., 500., cx);
+                    gpui_kit::open_window(opts, cx, move |window, cx| {
+                        let view = cx.new(|cx| {
+                            ReaderView::new(window, text, path, theme, wpm, title, cx)
+                        });
+                        view.focus_handle(cx).focus(window, cx);
+                        view
+                    })
+                    .expect("failed to open window");
+                }
+                None => {
+                    let opts = win_options("Supersprinter".into(), 560., 360., cx);
+                    gpui_kit::open_window(opts, cx, move |window, cx| {
+                        let view = cx.new(|cx| LauncherView::new(theme, wpm, cx));
+                        view.focus_handle(cx).focus(window, cx);
+                        view
+                    })
+                    .expect("failed to open window");
+                }
             }
-            None => {
-                let opts = win_options("Supersprinter".into(), 560., 360., cx);
-                cx.open_window(opts, move |window, cx| {
-                    let view = cx.new(|cx| LauncherView::new(theme, wpm, cx));
-                    view.focus_handle(cx).focus(window);
-                    view
-                })
-                .expect("failed to open window");
-            }
-        }
-    });
+        });
 }

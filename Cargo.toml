@@ -6,7 +6,8 @@ members = ["crates/core", "crates/cli", "crates/gui", "crates/render"]
 core = { path = "crates/core", package = "supersprinter-core" }
 render = { path = "crates/render", package = "supersprinter-render" }
 clap = { version = "4.6.7", features = ["derive"] }
-gpui = "0.2.2"
+gpui = { package = "gpui-pre", version = "=0.3.11" }
+gpui-kit = "0.9.0"
 ffmpeg-next = "9.0.0"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.8"
