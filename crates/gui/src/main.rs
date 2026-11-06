@@ -17,8 +17,8 @@ use clap::Parser;
 use gpui::{
     App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, Global, InteractiveElement,
     IntoElement, KeyDownEvent, ParentElement, PathBuilder, PathPromptOptions, Pixels, Render,
-    StatefulInteractiveElement, Styled, SharedString, Subscription, Task, TextAlign, TextRun, Window,
-    WindowBounds, WindowDecorations, WindowOptions, canvas, div, font, point,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextAlign, TextRun,
+    Window, WindowBounds, WindowDecorations, WindowOptions, canvas, div, font, point,
     prelude::FluentBuilder, px, size,
 };
 use gpui_kit::assets::{AllAssets, IconName};
@@ -29,7 +29,9 @@ use gpui_kit::component::{
     slider::{Slider, SliderEvent, SliderState},
 };
 
-use core::{Frame, FramePos, Theme, first_pos, frame_at, frames, load_book, load_theme, next_pos, seek_pos};
+use core::{
+    Frame, FramePos, Theme, first_pos, frame_at, frames, load_book, load_theme, next_pos, seek_pos,
+};
 
 const SLIDER_MIN: u32 = 10;
 const SLIDER_MAX: u32 = 600;
@@ -234,13 +236,13 @@ impl Render for LauncherView {
             .id("launcher")
             .key_context("launcher")
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| {
-                match e.keystroke.key.as_str() {
+            .on_key_down(cx.listener(
+                |this, e: &KeyDownEvent, w, cx| match e.keystroke.key.as_str() {
                     "escape" => close_window(w, cx),
                     "enter" => this.run(cx),
                     _ => {}
-                }
-            }))
+                },
+            ))
             .on_click(cx.listener(|this, _e, window, cx| this.focus.focus(window, cx)))
             .size_full()
             .relative()
@@ -264,42 +266,49 @@ impl Render for LauncherView {
             .items_center()
             .justify_center()
             .gap_4()
-            .child(
+            .children([
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(
+                    .children([
                         div()
                             .px_3()
                             .py_1()
                             .border_1()
                             .border_color(border)
                             .font_family(ui_font(cx))
-                            .child(path_label),
-                    )
-                    .child(
+                            .child(path_label)
+                            .into_any_element(),
                         Button::new("browse")
                             .label("Browse…")
-                            .on_click(cx.listener(|this, _e, _w, cx| this.browse(cx))),
-                    ),
-            )
-            .child(
+                            .on_click(cx.listener(|this, _e, _w, cx| this.browse(cx)))
+                            .into_any_element(),
+                    ])
+                    .into_any_element(),
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_3()
-                    .child(div().w(px(240.)).child(Slider::new(&self.slider).w_full()))
-                    .child(div().font_family(ui_font(cx)).child(format!("{} wpm", self.wpm))),
-            )
-            .child(
-                    Button::new("run")
-                        .primary()
-                        .label("▶ Run")
-                        .on_click(cx.listener(|this, _e, _w, cx| this.run(cx))),
-            )
+                    .children([
+                        div()
+                            .w(px(240.))
+                            .child(Slider::new(&self.slider).w_full())
+                            .into_any_element(),
+                        div()
+                            .font_family(ui_font(cx))
+                            .child(format!("{} wpm", self.wpm))
+                            .into_any_element(),
+                    ])
+                    .into_any_element(),
+                Button::new("run")
+                    .primary()
+                    .label("▶ Run")
+                    .on_click(cx.listener(|this, _e, _w, cx| this.run(cx)))
+                    .into_any_element(),
+            ])
             .when_some(self.error.clone(), |this, err| {
                 this.child(
                     div()
@@ -470,7 +479,8 @@ impl ReaderView {
         self.restart_task(cx);
         let target = self.wpm.clamp(SLIDER_MIN, SLIDER_MAX) as f32;
         if self.slider.read(cx).value().start() != target {
-            self.slider.update(cx, |s, cx| s.set_value(target, window, cx));
+            self.slider
+                .update(cx, |s, cx| s.set_value(target, window, cx));
         }
         cx.notify();
     }
@@ -480,7 +490,8 @@ impl ReaderView {
         self.apply_wpm(wpm, window, cx);
         let text = self.wpm.to_string();
         if self.wpm_input.read(cx).value().to_string() != text {
-            self.wpm_input.update(cx, |s, cx| s.set_value(text, window, cx));
+            self.wpm_input
+                .update(cx, |s, cx| s.set_value(text, window, cx));
         }
     }
 
@@ -560,7 +571,9 @@ impl Render for ReaderView {
         let theme = self.theme;
         let frame = self.frame();
         let word: &str = frame.and_then(|f| f.word).unwrap_or("");
-        let pivot = frame.map_or(0, |f| f.pivot).min(word.chars().count().saturating_sub(1));
+        let pivot = frame
+            .map_or(0, |f| f.pivot)
+            .min(word.chars().count().saturating_sub(1));
 
         let text_c: gpui::Hsla = rgb_bytes(theme.text).into();
         let pivot_c: gpui::Hsla = rgb_bytes(theme.pivot).into();
@@ -670,7 +683,14 @@ impl Render for ReaderView {
                     let mid_x = bounds.origin.x + bounds.size.width / 2.;
                     let origin_x = mid_x - pivot_center;
                     let origin_y = bounds.origin.y + (bounds.size.height - line_height) / 2.;
-                    let _ = line.paint(point(origin_x, origin_y), line_height, TextAlign::Left, None, window, cx);
+                    let _ = line.paint(
+                        point(origin_x, origin_y),
+                        line_height,
+                        TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    );
                     let pivot_x = origin_x + pivot_center;
 
                     let gap = px(6.);
@@ -708,10 +728,7 @@ impl Render for ReaderView {
             .key_context("wpm-input")
             .on_key_down(|_e, _w, cx| cx.stop_propagation())
             .w(px(120.))
-            .child(
-                NumberInput::new(&self.wpm_input)
-                    .accessibility_label("Words per minute"),
-            );
+            .child(NumberInput::new(&self.wpm_input).accessibility_label("Words per minute"));
 
         let play_label = if self.playing { "pause" } else { "play" };
         let progress = format!("{}/{}", self.pos.idx + 1, self.total);
@@ -727,59 +744,51 @@ impl Render for ReaderView {
             .justify_between()
             .p_3()
             .text_color(rgb_bytes(theme.text))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_4()
-                    .child(
-                        Button::new("play-toggle")
-                            .icon(if self.playing {
-                                IconName::Pause
-                            } else {
-                                IconName::Play
-                            })
-                            // Fixed-width label sized for "pause" (the longer
-                            // word) so the button never resizes on flip.
-                            .child(div().w(px(48.)).child(play_label))
-                            .on_click(cx.listener(|this, _, _w, cx| {
-                                this.set_playing(!this.playing, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("export-mp4")
-                            .icon(if self.exporting {
-                                IconName::LoaderCircle
-                            } else {
-                                IconName::Download
-                            })
-                            .label(if self.exporting {
-                                "exporting…"
-                            } else {
-                                "export mp4"
-                            })
-                            .disabled(self.exporting)
-                            .on_click(cx.listener(|this, _, _w, cx| this.export_mp4(cx))),
-                    )
-                    .child(
-                        self.export_msg
-                            .as_ref()
-                            .map(|m| div().text_color(rgb_bytes(theme.arrows)).child(m.clone()))
-                            .unwrap_or_else(|| div()),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_4()
-                    .child(div().w(px(240.)).child(Slider::new(&self.slider).w_full()))
-                    .child(input)
-                    .child(div().child(wpm_label))
-                    .child(div().child(progress)),
-            );
+            .children([
+                div().flex().flex_row().items_center().gap_4().children([
+                    Button::new("play-toggle")
+                        .icon(if self.playing {
+                            IconName::Pause
+                        } else {
+                            IconName::Play
+                        })
+                        // Fixed-width label sized for "pause" (the longer
+                        // word) so the button never resizes on flip.
+                        .child(div().w(px(48.)).child(play_label))
+                        .on_click(
+                            cx.listener(|this, _, _w, cx| this.set_playing(!this.playing, cx)),
+                        )
+                        .into_any_element(),
+                    Button::new("export-mp4")
+                        .icon(if self.exporting {
+                            IconName::LoaderCircle
+                        } else {
+                            IconName::Download
+                        })
+                        .label(if self.exporting {
+                            "exporting…"
+                        } else {
+                            "export mp4"
+                        })
+                        .disabled(self.exporting)
+                        .on_click(cx.listener(|this, _, _w, cx| this.export_mp4(cx)))
+                        .into_any_element(),
+                    self.export_msg
+                        .as_ref()
+                        .map(|m| div().text_color(rgb_bytes(theme.arrows)).child(m.clone()))
+                        .unwrap_or_else(|| div())
+                        .into_any_element(),
+                ]),
+                div().flex().flex_row().items_center().gap_4().children([
+                    div()
+                        .w(px(240.))
+                        .child(Slider::new(&self.slider).w_full())
+                        .into_any_element(),
+                    input.into_any_element(),
+                    div().child(wpm_label).into_any_element(),
+                    div().child(progress).into_any_element(),
+                ]),
+            ]);
 
         let mut root = div()
             .id("root")
@@ -798,7 +807,7 @@ impl Render for ReaderView {
         let title = self.title.clone();
         root = root.child(app_title_bar(theme, title, |w, cx| close_window(w, cx)));
 
-        root.child(controls).child(reader)
+        root.children([controls.into_any_element(), reader.into_any_element()])
     }
 }
 
@@ -852,7 +861,11 @@ fn main() {
                 + 0.0722 * theme.background[2] as f32)
                 / 255.0;
             KitTheme::update(cx, |t| {
-                t.mode = if lum < 0.5 { ThemeMode::Dark } else { ThemeMode::Light };
+                t.mode = if lum < 0.5 {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                };
                 t.colors.background = rgb_bytes(theme.background).into();
                 t.colors.foreground = rgb_bytes(theme.text).into();
                 t.colors.primary = rgb_bytes(theme.pivot).into();
@@ -872,9 +885,8 @@ fn main() {
                     let title: SharedString = format!("Supersprinter — {stem}").into();
                     let opts = win_options(title.clone(), 900., 500., cx);
                     gpui_kit::open_window(opts, cx, move |window, cx| {
-                        let view = cx.new(|cx| {
-                            ReaderView::new(window, text, path, theme, wpm, title, cx)
-                        });
+                        let view =
+                            cx.new(|cx| ReaderView::new(window, text, path, theme, wpm, title, cx));
                         view.focus_handle(cx).focus(window, cx);
                         view
                     })
