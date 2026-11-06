@@ -17,12 +17,14 @@ use ratatui::{
 use core::{Frame, Theme, build_frames, load_book, load_theme};
 
 #[derive(Parser)]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(name = "supersprinter-cli", about = "RSVP speed reader")]
 struct Cli {
     /// Book file (.txt)
     file: Option<PathBuf>,
     /// Words per minute
-    wpm: Option<u32>,
+    #[arg(default_value = "300")]
+    wpm: u32,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -34,10 +36,13 @@ enum Command {
     Render {
         /// Book file (.txt)
         file: PathBuf,
+
         /// Output mp4 (default: <file-stem>.mp4 next to the input)
         output: Option<PathBuf>,
+
         /// Words per minute
-        wpm: Option<u32>,
+        #[arg(default_value = "300")]
+        wpm: u32,
     },
 }
 
@@ -184,19 +189,18 @@ fn read_terminal(path: &Path, mut wpm: u32, theme: &Theme) -> Result<()> {
 }
 
 fn main() {
-    if let Err(e) = real_main() {
+    if let Err(e) = cli_main() {
         eprintln!("error: {e:#}");
         std::process::exit(1);
     }
 }
 
-fn real_main() -> Result<()> {
+fn cli_main() -> Result<()> {
     let cli = Cli::parse();
     let theme = load_theme()?;
 
     match cli.command {
         Some(Command::Render { file, output, wpm }) => {
-            let wpm = wpm.unwrap_or(300);
             let out = output.unwrap_or_else(|| file.with_extension("mp4"));
             let text = load_book(&file)?;
             eprintln!("rendering {} wpm → {}", wpm, out.display());
@@ -206,7 +210,7 @@ fn real_main() -> Result<()> {
         }
         None => {
             let file = cli.file.context("missing <FILE> argument")?;
-            let wpm = cli.wpm.unwrap_or(300);
+            let wpm = cli.wpm;
             read_terminal(&file, wpm, &theme)
         }
     }
