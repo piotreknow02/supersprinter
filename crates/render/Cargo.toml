@@ -10,3 +10,4 @@ ab_glyph = "0.2.32"
 fontdb = { workspace = true }
 ffmpeg-next = "9.0.0"
 anyhow = { workspace = true }
+rayon = "1.12"

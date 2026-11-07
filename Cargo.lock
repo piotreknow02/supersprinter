@@ -7209,6 +7209,7 @@ dependencies = [
  "ffmpeg-next",
  "fontdb",
  "image",
+ "rayon",
  "supersprinter-core",
 ]
 

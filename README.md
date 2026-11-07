@@ -10,7 +10,7 @@ MP4 renderer.
 | Crate | What it is |
 |---|---|
 | `crates/core` | No-UI logic: book loading (`load_book`), frame generation (`frames` — a lazy, allocation-free view over the text: pivot at ~30% of the word, Glance-style pacing: extra ticks after sentence ends, commas, long words; `first_pos`/`frame_at`/`next_pos`/`seek_pos` give readers a seekable cursor without materializing the stream), theme loading from TOML. |
-| `crates/render` | Renders each frame to an RGBA image (ab_glyph + image) and encodes 1280×720/24fps MP4 via libx264 (ffmpeg-next). |
+| `crates/render` | Renders each frame to an RGBA image (ab_glyph + image, batches drawn in parallel with rayon) and encodes 1280×720/24fps MP4 via libx264 by default (ffmpeg-next). |
 | `crates/cli` | `supersprinter-cli`: ratatui terminal reader (`supersprinter-cli book.txt 300`) plus `supersprinter-cli render book.txt [out.mp4] [wpm]`. |
 | `crates/gui` | `supersprinter-gui`: gpui desktop app. Launcher window (file picker, WPM slider, Run) and reader window (canvas-rendered word with ▼/▲ pivot markers, play/pause, slider + numeric WPM input, progress). Client-side window decorations with working close/minimize/fullscreen and edge resize. |
 
@@ -42,6 +42,40 @@ cargo run -p supersprinter-cli -- render book.txt out.mp4 300
 cargo run -p supersprinter-gui
 cargo run -p supersprinter-gui -- book.txt 300
 ```
+
+## Encoder choice
+
+`--ffmpeg-args` (CLI `-f`, GUI "ffmpeg args" field) passes `-key value`
+options to the encoder and muxer. `-c:v`/`-codec:v`/`-vcodec` additionally
+selects the encoder; the built-in default is the portable software encoder
+libx264 with `-preset veryfast -tune stillimage -crf 20` — tuned for
+flat-background text and already using every CPU core. Output is always
+muxed with `-movflags +faststart`.
+
+Recommended configs (pass with `-f "..."`):
+
+| Config | ffmpeg-args | Notes |
+|---|---|---|
+| Default (built-in) | *(no args needed)* | libx264 `-preset veryfast -tune stillimage -crf 20`; ~3–4× faster than `medium` with no visible loss on text. Use `-preset medium -crf 18` if you want a smaller archive file |
+| NVIDIA | `-c:v h264_nvenc -preset p5 -rc vbr -cq 24 -b:v 0 -profile:v high` | Offloads encoding to the NVENC chip, CPU stays free for drawing; `-profile:v high` matters because NVENC defaults to `main`; raise `-cq` (28) for speed, lower (20) for quality |
+| AMD | `-c:v h264_amf -quality speed -rc_mode cqp -qp_i 20 -qp_p 22` | AMF hardware encoder; `speed` is the fastest mode ffmpeg exposes (the SDK's `turbo` is not mapped) and static text hides its quality cost — use `balanced` if edges look soft; Linux needs the AMF runtime (`libamfrt64.so.1`) |
+| Intel | `-c:v h264_qsv -global_quality 23` | Quick Sync on iGPU (or Arc dGPU); lower `-global_quality` = better; needs the oneVPL runtime |
+| Apple | `-c:v h264_videotoolbox -realtime 0 -q:v 65` | VideoToolbox hardware encoder on Apple Silicon/Intel Macs; `-realtime 0` allows full-quality non-live encode; `-q:v` 1–100 |
+
+The built-in default was verified sharp (no blur/ringing on text edges).
+If your machine is too slow and you want to trade quality for speed
+anyway: raise `-crf` (23–28), drop the preset
+(`-preset fast`/`faster`/`ultrafast`), or go extreme with
+`-x264-params subme=2:me=dia:rc-lookahead=0`. Hardware equivalents:
+NVENC `-preset p1` with `-cq 30`, AMF `-quality speed` (already the
+default above), QSV `-global_quality 28`, VideoToolbox `-q:v 50`.
+
+Hardware encoders are ~10–20% larger than x264 at visually equal quality —
+use them to free the CPU, not to shrink files. `h264_vaapi` is not
+reachable this way: it needs a hwframe context the `-key value` format
+cannot express.
+
+## Usage
 
 GUI keys: <kbd>space</kbd> play/pause, <kbd>←</kbd>/<kbd>→</kbd> step,
 <kbd>+</kbd>/<kbd>-</kbd> WPM, <kbd>q</kbd>/<kbd>Esc</kbd> close.

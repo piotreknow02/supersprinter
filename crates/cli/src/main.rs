@@ -44,7 +44,7 @@ enum Command {
         #[arg(default_value = "300")]
         wpm: u32,
 
-        /// Extra ffmpeg options, e.g. "-preset slow -crf 18"
+        /// Extra ffmpeg options, e.g. "-preset slow -crf 18" or "-c:v h264_nvenc"
         #[arg(short = 'f', long = "ffmpeg-args", allow_hyphen_values = true, default_value = "")]
         ffmpeg_args: String,
     },
