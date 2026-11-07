@@ -1,0 +1,28 @@
+name: Setup libclang (Windows)
+description: >
+  Ensure bindgen (ffmpeg-sys-next) finds a libclang.dll matching the runner
+  architecture. windows-11-arm already ships native ARM64 LLVM 22.1.8 at
+  C:\Program Files\LLVM (image toolset llvm.version; installed from the
+  official llvm/llvm-project aarch64-pc-windows-msvc release). Chocolatey's
+  llvm package is x64-only: installing it on ARM64 overwrites that tree with
+  an emulated x64 build and bindgen then dies with
+  "invalid DLL (x86-64)". So: never choco-install on ARM64, just point
+  LIBCLANG_PATH at the native tree; keep the existing choco flow on x64.
+runs:
+  using: composite
+  steps:
+    - name: Install LLVM (x64)
+      if: runner.arch != 'ARM64'
+      shell: pwsh
+      run: |
+        choco install llvm --yes --no-progress
+    - name: Export LIBCLANG_PATH
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $dll = "C:\Program Files\LLVM\bin\libclang.dll"
+        if (!(Test-Path -LiteralPath $dll)) {
+          throw "libclang.dll not found at '$dll'; runner.arch='$env:RUNNER_ARCH' has no usable LLVM."
+        }
+        "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+        "Using $dll (runner.arch=$env:RUNNER_ARCH)"

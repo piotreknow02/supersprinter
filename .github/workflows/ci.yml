@@ -63,14 +63,12 @@ jobs:
           sudo apt-get install -y clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev \
             libfontconfig1-dev libfreetype-dev libavformat-dev libavcodec-dev libavutil-dev \
             libswscale-dev libavfilter-dev libavdevice-dev libclang-dev
-      - name: Install Windows dependencies
+      # libclang for bindgen (ffmpeg-sys-next); the action exports
+      # LIBCLANG_PATH because the session does not pick up machine env vars
+      # from Chocolatey automatically.
+      - name: Set up libclang (bindgen)
         if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          choco install llvm --yes --no-progress
-          # libclang for bindgen (ffmpeg-sys-next); the session does not pick
-          # up machine env vars from Chocolatey automatically.
-          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+        uses: ./.github/actions/setup-libclang-windows
       - name: Set up FFmpeg
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/setup-ffmpeg-windows
