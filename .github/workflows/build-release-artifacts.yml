@@ -135,11 +135,13 @@ jobs:
       - name: Package tarball
         run: scripts/package-linux.sh tarball --version "$VERSION" --arch "$ARCH"
       - name: Package .deb
-        run: scripts/package-linux.sh deb --version "$VERSION" --arch "$ARCH" \
-          --deb-revision "${{ needs.prepare.outputs.deb_revision }}"
+        run: |
+          scripts/package-linux.sh deb --version "$VERSION" --arch "$ARCH" \
+            --deb-revision "${{ needs.prepare.outputs.deb_revision }}"
       - name: Package .rpm
-        run: scripts/package-linux.sh rpm --version "$VERSION" --arch "$ARCH" \
-          --rpm-release "${{ needs.prepare.outputs.rpm_release }}"
+        run: |
+          scripts/package-linux.sh rpm --version "$VERSION" --arch "$ARCH" \
+            --rpm-release "${{ needs.prepare.outputs.rpm_release }}"
       - name: Package AppImage
         run: scripts/package-linux.sh appimage --version "$VERSION" --arch "$ARCH"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -74,6 +74,9 @@ jobs:
           TAG: ${{ steps.norm.outputs.tag }}
         run: |
           set -euo pipefail
+          # Runner images ship without a git identity; annotated tags need one.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG" -m "Supersprinter $TAG"
           git push origin "$TAG"
           gh release create "$TAG" --draft --title "$TAG" --generate-notes
