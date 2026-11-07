@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 core = { workspace = true }
-image = { workspace = true }
-ab_glyph = { workspace = true }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+ab_glyph = "0.2.32"
 fontdb = { workspace = true }
-ffmpeg-next = { workspace = true }
+ffmpeg-next = "9.0.0"
 anyhow = { workspace = true }

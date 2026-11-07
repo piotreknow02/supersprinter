@@ -6,16 +6,5 @@ members = ["crates/core", "crates/cli", "crates/gui", "crates/render"]
 core = { path = "crates/core", package = "supersprinter-core" }
 render = { path = "crates/render", package = "supersprinter-render" }
 clap = { version = "4.6.7", features = ["derive"] }
-gpui = { package = "gpui-pre", version = "=0.3.11" }
-gpui-kit = "0.9.0"
-ffmpeg-next = "9.0.0"
-serde = { version = "1.0.229", features = ["derive"] }
-toml = "1.1.8"
-dirs = "7.0.0"
-anyhow = "1.0.104"
-thiserror = "2.0.21"
-ratatui = "0.30.2"
-crossterm = "0.29.0"
-image = { version = "0.25.10", default-features = false, features = ["png"] }
-ab_glyph = "0.2.32"
 fontdb = "0.23"
+anyhow = "1.0.104"

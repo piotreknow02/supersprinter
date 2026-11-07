@@ -11,6 +11,6 @@ path = "src/main.rs"
 core = { workspace = true }
 render = { workspace = true }
 clap = { workspace = true }
-ratatui = { workspace = true }
-crossterm = { workspace = true }
+ratatui = "0.30.2"
+crossterm = "0.29.0"
 anyhow = { workspace = true }
