@@ -85,13 +85,12 @@ impl ReaderView {
         }));
         subscriptions.push(
             cx.subscribe_in(&wpm_input, window, |this, state, ev, window, cx| {
-                if matches!(ev, InputEvent::Change) {
-                    if let Ok(v) = state.read(cx).value().parse::<u32>() {
-                        if (1..=4000).contains(&v) {
-                            // NOT set_wpm: never echo into the box while typing.
-                            this.apply_wpm(v, window, cx);
-                        }
-                    }
+                if matches!(ev, InputEvent::Change)
+                    && let Ok(v) = state.read(cx).value().parse::<u32>()
+                    && (1..=4000).contains(&v)
+                {
+                    // NOT set_wpm: never echo into the box while typing.
+                    this.apply_wpm(v, window, cx);
                 }
             }),
         );
