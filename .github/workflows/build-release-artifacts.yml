@@ -186,14 +186,27 @@ jobs:
         uses: ./.github/actions/setup-ffmpeg-windows
         with:
           arch: ${{ matrix.artifact_arch }}
+      # The build must stay native (no --target): cargo does not pass RUSTFLAGS
+      # to host artifacts, so with --target the flag below would never reach
+      # ffmpeg-sys-next's build script - whose main thread needs a bigger stack
+      # than the 1 MB PE default, or bindgen's libclang dies with
+      # STATUS_STACK_OVERFLOW (0xc00000fd) while parsing the ffmpeg + Windows
+      # SDK headers. Both matrix legs run on their own arch, so host == target.
       - name: Build release binary
         shell: pwsh
-        run: cargo build -p supersprinter-gui --release --locked --bin supersprinter-gui --target $env:RUST_TARGET
+        env:
+          RUSTFLAGS: "-C link-arg=/STACK:8388608"
+        run: |
+          $hostTriple = (rustc -vV | Select-String '^host: ').Line -replace '^host: ', ''
+          if ($hostTriple -ne $env:RUST_TARGET) {
+            throw "runner host triple '$hostTriple' != RUST_TARGET '$env:RUST_TARGET'; this leg must not cross-compile (see the note above)."
+          }
+          cargo build -p supersprinter-gui --release --locked --bin supersprinter-gui
       - name: Stage portable payload
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $out = "target\$env:RUST_TARGET\release"
+          $out = "target\release"
           # Packaging renames the crate bin to the product name.
           Copy-Item "$out\supersprinter-gui.exe" "$out\supersprinter.exe" -Force
           # Bundle the FFmpeg DLLs next to the exe (MSI + portable ZIP).
@@ -202,7 +215,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $out = "target\$env:RUST_TARGET\release"
+          $out = "target\release"
           New-Item -ItemType Directory -Path dist\portable -Force | Out-Null
           Copy-Item "$out\supersprinter.exe" dist\portable\ -Force
           Copy-Item "$out\*.dll" dist\portable\ -Force
@@ -248,10 +261,10 @@ jobs:
           # One WiX component per FFmpeg DLL, generated from what is actually
           # staged next to the exe (no hardcoded DLL names).
           pwsh -File scripts/windows/gen-ffmpeg-wxs.ps1 `
-            -BinDir "target\$env:RUST_TARGET\release" -OutFile "ffmpeg-files.wxs"
+            -BinDir "target\release" -OutFile "ffmpeg-files.wxs"
 
           $msiName = "supersprinter-v${env:VERSION}-windows-${env:ARTIFACT_ARCH}.msi"
-          cargo wix --package supersprinter-gui --profile release --target $env:RUST_TARGET `
+          cargo wix --package supersprinter-gui --profile release `
             --no-build --bin-path "$wixBin" --include ffmpeg-files.wxs `
             --output "dist\$msiName"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -374,10 +387,20 @@ jobs:
       - name: Build release binary
         if: runner.os != 'Windows'
         run: cargo build -p supersprinter-cli --release --locked --bin supersprinter-cli
-      - name: Build release binary
+      # Same as in build_windows: native build (no --target) so RUSTFLAGS
+      # reaches ffmpeg-sys-next's build script and its 1 MB main-thread stack
+      # gets the bigger PE reserve bindgen's libclang needs.
+      - name: Build release binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: cargo build -p supersprinter-cli --release --locked --bin supersprinter-cli --target $env:RUST_TARGET
+        env:
+          RUSTFLAGS: "-C link-arg=/STACK:8388608"
+        run: |
+          $hostTriple = (rustc -vV | Select-String '^host: ').Line -replace '^host: ', ''
+          if ($hostTriple -ne $env:RUST_TARGET) {
+            throw "runner host triple '$hostTriple' != RUST_TARGET '$env:RUST_TARGET'; this leg must not cross-compile (see the note in the build_windows job)."
+          }
+          cargo build -p supersprinter-cli --release --locked --bin supersprinter-cli
       - name: Package CLI archive
         if: runner.os == 'Linux'
         shell: bash
@@ -409,7 +432,7 @@ jobs:
           $stage = "dist\cli\$root"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
           New-Item -ItemType Directory -Path dist\release -Force | Out-Null
-          Copy-Item "target\$env:RUST_TARGET\release\supersprinter-cli.exe" $stage -Force
+          Copy-Item "target\release\supersprinter-cli.exe" $stage -Force
           Copy-Item (Join-Path $env:FFMPEG_DIR "bin\*.dll") $stage -Force
           Copy-Item LICENSE "$stage\LICENSE" -Force
           Compress-Archive -Path "$stage\*" -DestinationPath "dist\release\$root.zip"
