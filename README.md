@@ -5,6 +5,14 @@ and presents one word at a time with a fixed pivot (ORP) letter, so the eye
 never has to move. Ships a terminal reader, a graphical (gpui) reader and an
 MP4 renderer.
 
+![Supersprinter reader window](assets/screenshots/gui-reader.png)
+
+| GUI launcher | Terminal reader |
+|:---:|:---:|
+| ![Supersprinter launcher window](assets/screenshots/gui-launcher.png) | ![Supersprinter terminal reader](assets/screenshots/cli.png) |
+
+The screenshots above show a lorem ipsum sample text.
+
 ## Crates
 
 | Crate | What it is |
@@ -121,5 +129,61 @@ cannot express.
 
 ## Usage
 
-GUI keys: <kbd>space</kbd> play/pause, <kbd>←</kbd>/<kbd>→</kbd> step,
-<kbd>+</kbd>/<kbd>-</kbd> WPM, <kbd>q</kbd>/<kbd>Esc</kbd> close.
+Both readers show one word at a time with the pivot (ORP) letter highlighted
+and marked by ▼/▲. The `wpm` argument is the base speed; pacing on top of it
+is automatic — sentence ends, commas and long words get extra time. Both
+readers follow the [theme](#theme).
+
+### Terminal reader
+
+```sh
+supersprinter-cli book.txt 300
+```
+
+| Key | Action |
+|---|---|
+| <kbd>space</kbd> | play / pause |
+| <kbd>←</kbd> / <kbd>→</kbd> | step one word back / forward |
+| <kbd>+</kbd> / <kbd>-</kbd> | speed ±25 wpm (20–1200) |
+| <kbd>q</kbd> / <kbd>Esc</kbd> | quit |
+
+The status line shows progress (`word / total`), the current speed and the
+key hints. Reaching the last word exits with status 0.
+
+### Desktop app
+
+```sh
+supersprinter-gui                         # launcher window
+supersprinter-gui book.txt 300            # open a book directly
+```
+
+The launcher picks a `.txt` file (<kbd>Browse…</kbd>) and a starting speed
+(slider, 10–600 wpm); <kbd>Enter</kbd> runs, <kbd>Esc</kbd> closes. The
+reader window adds:
+
+- **play/pause** and **export mp4** buttons — export asks for a destination
+  and encodes in the background, progress and result land in the status bar
+- a WPM slider (10–600) *and* a free numeric input (1–4000), kept in sync
+- word progress (`24/294`) and a status bar (`Ready`, export messages)
+- an **ffmpeg args** collapsible accepting the same options as the CLI `-f`
+  (see [Encoder choice](#encoder-choice))
+- the same keys as the CLI: <kbd>space</kbd>, <kbd>←</kbd>/<kbd>→</kbd>,
+  <kbd>+</kbd>/<kbd>-</kbd>, <kbd>q</kbd>/<kbd>Esc</kbd> (typing in an input
+  box never drives the reader)
+
+Windows are client-side decorated: drag to move, double-click the title bar
+to zoom, minimize / maximize / close buttons, a ghost button for fullscreen,
+and edge resize.
+
+### MP4 rendering
+
+```sh
+supersprinter-cli render book.txt                          # -> book.mp4
+supersprinter-cli render book.txt out.mp4 400
+supersprinter-cli render book.txt out.mp4 300 -f "-c:v h264_nvenc -preset p5"
+```
+
+Output is 1280×720 at 24 fps, always muxed with `-movflags +faststart`;
+`-f`/`--ffmpeg-args` passes any encoder/muxer options
+([Encoder choice](#encoder-choice)). The GUI's **export mp4** button does
+the same from a save dialog at the speed currently shown in the reader.
