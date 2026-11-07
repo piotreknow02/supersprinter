@@ -19,6 +19,7 @@ use gpui_kit::component::{
     collapsible::Collapsible,
     input::{Input, InputEvent, InputState, NumberInput},
     slider::{Slider, SliderEvent, SliderState},
+    status_bar::StatusBar,
 };
 
 use core::{Frame, FramePos, Theme, first_pos, frame_at, frames, next_pos, seek_pos};
@@ -496,11 +497,6 @@ impl Render for ReaderView {
                         .disabled(self.exporting)
                         .on_click(cx.listener(|this, _, _w, cx| this.export_mp4(cx)))
                         .into_any_element(),
-                    self.export_msg
-                        .as_ref()
-                        .map(|m| div().text_color(rgb_bytes(theme.arrows)).child(m.clone()))
-                        .unwrap_or_else(|| div())
-                        .into_any_element(),
                 ]),
                 div().flex().flex_row().items_center().gap_4().children([
                     div()
@@ -559,6 +555,20 @@ impl Render for ReaderView {
                     ),
             );
 
+        // Status line pinned to the bottom: export progress and results
+        // render here instead of crowding the controls row. The bar is
+        // always present so the layout never jumps when a message appears.
+        let status = StatusBar::new()
+            .flex_none()
+            .bg(rgb_bytes(theme.background))
+            .border_color(rgb_bytes(theme.arrows))
+            .text_color(rgb_bytes(theme.arrows))
+            .left(
+                self.export_msg
+                    .clone()
+                    .unwrap_or_else(|| "Ready".into()),
+            );
+
         let mut root = div()
             .id("root")
             .key_context("reader")
@@ -580,6 +590,7 @@ impl Render for ReaderView {
             controls.into_any_element(),
             settings.into_any_element(),
             reader.into_any_element(),
+            status.into_any_element(),
         ])
     }
 }
