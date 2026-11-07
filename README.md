@@ -152,11 +152,6 @@ key hints. Reaching the last word exits with status 0.
 
 ### Desktop app
 
-```sh
-supersprinter-gui                         # launcher window
-supersprinter-gui book.txt 300            # open a book directly
-```
-
 The launcher picks a `.txt` file (<kbd>Browse…</kbd>) and a starting speed
 (slider, 10–600 wpm); <kbd>Enter</kbd> runs, <kbd>Esc</kbd> closes. The
 reader window adds:
@@ -171,10 +166,6 @@ reader window adds:
   <kbd>+</kbd>/<kbd>-</kbd>, <kbd>q</kbd>/<kbd>Esc</kbd> (typing in an input
   box never drives the reader)
 
-Windows are client-side decorated: drag to move, double-click the title bar
-to zoom, minimize / maximize / close buttons, a ghost button for fullscreen,
-and edge resize.
-
 ### MP4 rendering
 
 ```sh
@@ -187,3 +178,8 @@ Output is 1280×720 at 24 fps, always muxed with `-movflags +faststart`;
 `-f`/`--ffmpeg-args` passes any encoder/muxer options
 ([Encoder choice](#encoder-choice)). The GUI's **export mp4** button does
 the same from a save dialog at the speed currently shown in the reader.
+
+## Credits
+
+- [Glance](https://github.com/Miserlou/Glance), whose RSVP pacing ideas this reader borrows from
+- [GitComet](https://github.com/Auto-Explore/GitComet), the model for the Rust desktop CI/CD and release pipeline
