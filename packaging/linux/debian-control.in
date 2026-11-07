@@ -1,0 +1,15 @@
+Source: supersprinter
+Maintainer: piotreknow02 <kontakt@piotreknow.dev>
+Section: utils
+Priority: optional
+Standards-Version: 4.7.0
+Homepage: https://github.com/piotreknow02/supersprinter
+
+Package: supersprinter
+Architecture: @ARCH@
+Depends: ${shlibs:Depends}, libvulkan1 | libegl1, libxkbcommon0
+Recommends: hicolor-icon-theme
+Description: RSVP speed reader
+ Supersprinter is a rapid serial visual presentation (RSVP) speed reader.
+ It shows text one word at a time at a fixed pivot point, either in a GUI
+ window or exported to a video file.

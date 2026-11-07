@@ -17,8 +17,8 @@ use core::{Theme, frames, load_book};
 
 use crate::reader::ReaderView;
 use crate::utils::{
-    app_title_bar, close_window, reader_title, rgb_bytes, ui_font, win_options, SLIDER_MAX,
-    SLIDER_MIN,
+    SLIDER_MAX, SLIDER_MIN, app_title_bar, close_window, reader_title, rgb_bytes, ui_font,
+    win_options,
 };
 
 pub(crate) struct LauncherView {

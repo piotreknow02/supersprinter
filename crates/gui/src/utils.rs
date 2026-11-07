@@ -62,6 +62,10 @@ pub(crate) fn win_options(title: SharedString, w: f32, h: f32, cx: &mut App) -> 
         is_resizable: true,
         is_movable: true,
         window_min_size: Some(size(px(480.), px(320.))),
+        // X11 taskbar/titlebar icon; app_id gives Wayland (and X11) the
+        // WMClass that the desktop entry's StartupWMClass matches.
+        icon: crate::assets::window_icon(),
+        app_id: Some("supersprinter".to_string()),
         ..Default::default()
     }
 }

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Supersprinter
+Comment=RSVP speed reader
+Exec=supersprinter
+Icon=supersprinter
+StartupWMClass=supersprinter
+Terminal=false
+Categories=Utility;Viewer;
+Keywords=reader;speed reading;RSVP;

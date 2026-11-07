@@ -24,7 +24,7 @@ use gpui_kit::component::{
 
 use core::{Frame, FramePos, Theme, first_pos, frame_at, frames, next_pos, seek_pos};
 
-use crate::utils::{app_title_bar, close_window, rgb_bytes, ui_font, SLIDER_MAX, SLIDER_MIN};
+use crate::utils::{SLIDER_MAX, SLIDER_MIN, app_title_bar, close_window, rgb_bytes, ui_font};
 
 pub(crate) struct ReaderView {
     text: String,
@@ -75,9 +75,8 @@ impl ReaderView {
                 .max(4000.)
                 .step(25.)
         });
-        let ffmpeg_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("-preset slow -crf 18")
-        });
+        let ffmpeg_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("-preset slow -crf 18"));
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(&slider, window, |this, _, ev, window, cx| {
             if let SliderEvent::Change(v) = ev {
@@ -196,7 +195,7 @@ impl ReaderView {
     fn set_wpm(&mut self, wpm: u32, window: &mut Window, cx: &mut Context<Self>) {
         self.apply_wpm(wpm, window, cx);
         let text = self.wpm.to_string();
-        if self.wpm_input.read(cx).value().to_string() != text {
+        if self.wpm_input.read(cx).value() != text {
             self.wpm_input
                 .update(cx, |s, cx| s.set_value(text, window, cx));
         }
@@ -541,17 +540,14 @@ impl Render for ReaderView {
                             ),
                     )
                     .content(
-                        div()
-                            .w(px(420.))
-                            .pt_2()
-                            .child(
-                                div()
-                                    .id("ffmpeg-input-guard")
-                                    .debug_selector(|| "ffmpeg-input-guard".into())
-                                    .key_context("ffmpeg-input")
-                                    .on_click(|_e, _w, cx| cx.stop_propagation())
-                                    .child(Input::new(&self.ffmpeg_input)),
-                            ),
+                        div().w(px(420.)).pt_2().child(
+                            div()
+                                .id("ffmpeg-input-guard")
+                                .debug_selector(|| "ffmpeg-input-guard".into())
+                                .key_context("ffmpeg-input")
+                                .on_click(|_e, _w, cx| cx.stop_propagation())
+                                .child(Input::new(&self.ffmpeg_input)),
+                        ),
                     ),
             );
 
@@ -563,11 +559,7 @@ impl Render for ReaderView {
             .bg(rgb_bytes(theme.background))
             .border_color(rgb_bytes(theme.arrows))
             .text_color(rgb_bytes(theme.arrows))
-            .left(
-                self.export_msg
-                    .clone()
-                    .unwrap_or_else(|| "Ready".into()),
-            );
+            .left(self.export_msg.clone().unwrap_or_else(|| "Ready".into()));
 
         let mut root = div()
             .id("root")
@@ -584,7 +576,7 @@ impl Render for ReaderView {
             }));
 
         let title = self.title.clone();
-        root = root.child(app_title_bar(theme, title, |w, cx| close_window(w, cx)));
+        root = root.child(app_title_bar(theme, title, close_window));
 
         root.children([
             controls.into_any_element(),
@@ -609,10 +601,8 @@ mod tests {
         font: "monospace".into(),
     });
 
-    fn open_reader<'a>(
-        cx: &'a mut TestAppContext,
-    ) -> (Entity<ReaderView>, &'a mut VisualTestContext) {
-        cx.update(|cx| gpui_kit::init(cx));
+    fn open_reader(cx: &mut TestAppContext) -> (Entity<ReaderView>, &mut VisualTestContext) {
+        cx.update(gpui_kit::init);
         cx.add_window_view(|window, cx| {
             ReaderView::new(
                 window,

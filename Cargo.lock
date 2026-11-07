@@ -7194,8 +7194,10 @@ name = "supersprinter-gui"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "embed-resource",
  "gpui-kit",
  "gpui-pre",
+ "image",
  "supersprinter-core",
  "supersprinter-render",
 ]

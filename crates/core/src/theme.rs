@@ -57,8 +57,11 @@ fn candidate_paths() -> [Option<PathBuf>; 3] {
     let home = dirs::home_dir();
     [
         Some(PathBuf::from("theme.toml")),
-        home.as_ref()
-            .map(|home| home.join(".config").join("supersprinter").join("theme.toml")),
+        home.as_ref().map(|home| {
+            home.join(".config")
+                .join("supersprinter")
+                .join("theme.toml")
+        }),
         home.as_ref()
             .map(|home| home.join(".supersprinter").join("theme.toml")),
     ]
@@ -66,15 +69,12 @@ fn candidate_paths() -> [Option<PathBuf>; 3] {
 
 /// Parse theme TOML. `source` names the origin in error messages.
 fn parse_theme(raw: &str, source: &str) -> anyhow::Result<Theme> {
-    let file: ThemeFile = toml::from_str(raw)
-        .map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"))?;
-    let parse = |s: &str| {
-        parse_hex(s).map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"))
-    };
+    let file: ThemeFile =
+        toml::from_str(raw).map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"))?;
+    let parse = |s: &str| parse_hex(s).map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"));
     let pivot = match &file.pivot {
         Some(p) => parse(p)?,
-        None => parse_hex(&file.text)
-            .map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"))?,
+        None => parse_hex(file.text).map_err(|e| anyhow::anyhow!("invalid theme {source}: {e}"))?,
     };
     let font = match file.font {
         Some(f) => {
@@ -87,9 +87,9 @@ fn parse_theme(raw: &str, source: &str) -> anyhow::Result<Theme> {
         None => DEFAULT_FONT.to_owned(),
     };
     Ok(Theme {
-        background: parse(&file.background)?,
-        text: parse(&file.text)?,
-        arrows: parse(&file.arrows)?,
+        background: parse(file.background)?,
+        text: parse(file.text)?,
+        arrows: parse(file.arrows)?,
         pivot,
         font,
     })
@@ -151,8 +151,8 @@ font = "JetBrains Mono"
     #[test]
     fn toml_roundtrip_and_missing_key() {
         let f: ThemeFile = toml::from_str(GOOD).unwrap();
-        assert_eq!(parse_hex(&f.background).unwrap(), [0x10, 0x10, 0x14]);
-        assert_eq!(f.font.as_deref(), Some("JetBrains Mono"));
+        assert_eq!(parse_hex(f.background).unwrap(), [0x10, 0x10, 0x14]);
+        assert_eq!(f.font, Some("JetBrains Mono"));
 
         let missing = r##"
 background = "#101014"

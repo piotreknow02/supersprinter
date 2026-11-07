@@ -35,10 +35,10 @@ pub struct ResolvedFont {
 pub fn resolve_font(theme: &Theme) -> Result<ResolvedFont> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
-    if theme.font != DEFAULT_FONT {
-        if let Some(face) = query(&db, &[fontdb::Family::Name(&theme.font)]) {
-            return Ok(face);
-        }
+    if theme.font != DEFAULT_FONT
+        && let Some(face) = query(&db, &[fontdb::Family::Name(&theme.font)])
+    {
+        return Ok(face);
     }
     let mut families = vec![fontdb::Family::Monospace];
     families.extend(MONO_FALLBACKS.iter().map(|n| fontdb::Family::Name(n)));
@@ -48,7 +48,10 @@ pub fn resolve_font(theme: &Theme) -> Result<ResolvedFont> {
             f
         })
         .with_context(|| {
-            format!("no usable monospace font found for theme font {:?}", theme.font)
+            format!(
+                "no usable monospace font found for theme font {:?}",
+                theme.font
+            )
         })
 }
 

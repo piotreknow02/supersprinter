@@ -2,9 +2,29 @@
 resolver = "3"
 members = ["crates/core", "crates/cli", "crates/gui", "crates/render"]
 
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+
 [workspace.dependencies]
 core = { path = "crates/core", package = "supersprinter-core" }
 render = { path = "crates/render", package = "supersprinter-render" }
 clap = { version = "4.6.7", features = ["derive"] }
 fontdb = "0.23"
 anyhow = "1.0.104"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.dev.package."gpui-pre"]
+opt-level = 2
+
+[profile.dev.package."gpui-kit"]
+opt-level = 2
+
+[profile.dev.package."taffy"]
+opt-level = 2

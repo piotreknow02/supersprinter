@@ -1,0 +1,124 @@
+name: Release (Manual Main Only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.1.0 or v0.1.0). Must match [workspace.package] version."
+        required: true
+        type: string
+      deb_revision:
+        description: "Debian package revision (e.g. 1 for 0.1.0-1)."
+        required: true
+        default: "1"
+        type: string
+      rpm_release:
+        description: "RPM package release (e.g. 1 for 0.1.0-1)."
+        required: true
+        default: "1"
+        type: string
+      prerelease:
+        description: "Mark GitHub release as prerelease"
+        required: true
+        default: false
+        type: boolean
+      draft:
+        description: "Keep release as draft after artifacts upload"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-manual-main-${{ github.event.inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Validate inputs and create draft release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      tag: ${{ steps.norm.outputs.tag }}
+      version: ${{ steps.norm.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Normalize and validate version
+        id: norm
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          version="$(echo "$INPUT_VERSION" | tr -d '[:space:]')"
+          version="${version#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || {
+            echo "::error::Invalid version '$version' (expected 0.1.0 or 0.1.0-rc.1)."; exit 1; }
+          crate_version="$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name=="supersprinter-gui").version')"
+          [ "$version" = "$crate_version" ] || {
+            echo "::error::Version '$version' does not match [workspace.package] version '$crate_version'."; exit 1; }
+          tag="v${version}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "::error::Tag '$tag' already exists on origin."; exit 1;
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Create tag and draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.norm.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git tag -a "$TAG" -m "Supersprinter $TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" --draft --title "$TAG" --generate-notes
+      - name: Clean up on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.norm.outputs.tag }}
+        run: |
+          # The tag may or may not have been pushed; deleting the release with
+          # --cleanup-tag removes both when they exist.
+          [ -n "${TAG:-}" ] && gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+
+  build:
+    name: Build and attach artifacts
+    needs: tag
+    uses: ./.github/workflows/build-release-artifacts.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      version: ${{ needs.tag.outputs.version }}
+      deb_revision: ${{ github.event.inputs.deb_revision }}
+      rpm_release: ${{ github.event.inputs.rpm_release }}
+
+  publish:
+    name: Publish release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs: [tag, build]
+    if: always() && needs.tag.result == 'success'
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.tag.outputs.tag }}
+    steps:
+      - name: Clean up failed release
+        if: needs.build.result != 'success'
+        run: |
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          echo "Deleted draft release and tag $TAG after build failure."
+      - name: Publish
+        if: needs.build.result == 'success' && github.event.inputs.draft != 'true'
+        run: |
+          set -euo pipefail
+          flags=(--draft=false)
+          if [ "${{ github.event.inputs.prerelease }}" = "true" ]; then flags+=(--prerelease); fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+      - name: Keep draft
+        if: needs.build.result == 'success' && github.event.inputs.draft == 'true'
+        run: echo "Release $TAG left as a draft (draft input was set)."

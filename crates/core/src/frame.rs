@@ -65,7 +65,10 @@ fn word_from(text: &str, from: usize) -> Option<(usize, &str)> {
 /// Position of the first frame. For empty text the stream is empty and
 /// [`frame_at`] returns `None` at this position.
 pub fn first_pos(text: &str) -> FramePos {
-    word_from(text, 0).map_or(FramePos { off: 0, idx: 0 }, |(off, _)| FramePos { off, idx: 0 })
+    word_from(text, 0).map_or(FramePos { off: 0, idx: 0 }, |(off, _)| FramePos {
+        off,
+        idx: 0,
+    })
 }
 
 /// The frame at `pos`, or `None` if no word remains from that offset.
@@ -79,7 +82,10 @@ pub fn next_pos(text: &str, pos: FramePos) -> FramePos {
         return pos;
     };
     match word_from(text, off + word.len()) {
-        Some((next_off, _)) => FramePos { off: next_off, idx: pos.idx + 1 },
+        Some((next_off, _)) => FramePos {
+            off: next_off,
+            idx: pos.idx + 1,
+        },
         None => pos,
     }
 }
@@ -88,7 +94,11 @@ pub fn next_pos(text: &str, pos: FramePos) -> FramePos {
 /// `pos`; a backward move rescans from the start of the text, which is fine
 /// for interactive stepping.
 pub fn seek_pos(text: &str, pos: FramePos, target: usize) -> FramePos {
-    let mut p = if target < pos.idx { first_pos(text) } else { pos };
+    let mut p = if target < pos.idx {
+        first_pos(text)
+    } else {
+        pos
+    };
     while p.idx < target {
         let n = next_pos(text, p);
         if n.idx == p.idx {
@@ -173,8 +183,7 @@ mod tests {
         let expected: Vec<&str> = text.split_whitespace().collect();
         let mut pos = first_pos(text);
         let mut seen = vec![];
-        loop {
-            let Some(f) = frame_at(text, pos) else { break };
+        while let Some(f) = frame_at(text, pos) {
             assert_eq!(seen.len(), pos.idx);
             seen.push(f.word.unwrap());
             let next = next_pos(text, pos);
@@ -201,7 +210,10 @@ mod tests {
         // Backward rescans from the start and lands on the right frame.
         let back = seek_pos(text, third, 0);
         assert_eq!(back, start);
-        assert_eq!(frame_at(text, seek_pos(text, third, 1)).unwrap().word, Some("two"));
+        assert_eq!(
+            frame_at(text, seek_pos(text, third, 1)).unwrap().word,
+            Some("two")
+        );
 
         // Clamped past the end: lands on the last frame.
         let last = seek_pos(text, start, 99);

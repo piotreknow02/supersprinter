@@ -45,7 +45,12 @@ enum Command {
         wpm: u32,
 
         /// Extra ffmpeg options, e.g. "-preset slow -crf 18" or "-c:v h264_nvenc"
-        #[arg(short = 'f', long = "ffmpeg-args", allow_hyphen_values = true, default_value = "")]
+        #[arg(
+            short = 'f',
+            long = "ffmpeg-args",
+            allow_hyphen_values = true,
+            default_value = ""
+        )]
         ffmpeg_args: String,
     },
 }
@@ -95,7 +100,11 @@ fn draw(
     let pad = center_col.saturating_sub(pivot as u16);
 
     let marker = |ch: char| {
-        let col = if word.is_empty() { center_col } else { pad + pivot as u16 };
+        let col = if word.is_empty() {
+            center_col
+        } else {
+            pad + pivot as u16
+        };
         Line::from(vec![
             " ".repeat(col as usize).into(),
             ch.set_style(Style::default().fg(to_color(theme.arrows))),
@@ -112,7 +121,9 @@ fn draw(
             .map(|(i, c)| (i, c.len_utf8()))
             .unwrap_or((word.len(), 0));
         let text = Style::default().fg(to_color(theme.text));
-        let pivot_style = Style::default().fg(to_color(theme.pivot)).add_modifier(Modifier::BOLD);
+        let pivot_style = Style::default()
+            .fg(to_color(theme.pivot))
+            .add_modifier(Modifier::BOLD);
         Line::from(vec![
             " ".repeat(pad as usize).into(),
             Span::from(&word[..pb]).set_style(text),
@@ -154,11 +165,17 @@ fn read_terminal(path: &Path, mut wpm: u32, theme: &Theme) -> Result<()> {
     let mut quit = false;
 
     while !quit {
-        let Some(frame) = frame_at(&text, pos) else { break };
+        let Some(frame) = frame_at(&text, pos) else {
+            break;
+        };
         terminal.draw(|tui| draw(tui, &frame, theme, wpm, pos.idx, total, !playing))?;
 
         let tick_ms = 60_000 / wpm.max(1) * frame.ticks;
-        let timeout = if playing { Some(Duration::from_millis(tick_ms as u64)) } else { None };
+        let timeout = if playing {
+            Some(Duration::from_millis(tick_ms as u64))
+        } else {
+            None
+        };
 
         if event::poll(timeout.unwrap_or(Duration::MAX))? {
             match event::read()? {
@@ -204,18 +221,23 @@ fn cli_main() -> Result<()> {
     let theme = load_theme()?;
 
     match cli.command {
-        Some(Command::Render { file, output, wpm, ffmpeg_args }) => {
+        Some(Command::Render {
+            file,
+            output,
+            wpm,
+            ffmpeg_args,
+        }) => {
             let out = output.unwrap_or_else(|| file.with_extension("mp4"));
             let text = load_book(&file)?;
             eprintln!("rendering {} wpm → {}", wpm, out.display());
-            render::render_video(&text, &out, wpm, &theme, &ffmpeg_args)?;
+            render::render_video(&text, &out, wpm, theme, &ffmpeg_args)?;
             eprintln!("done: {}", out.display());
             Ok(())
         }
         None => {
             let file = cli.file.context("missing <FILE> argument")?;
             let wpm = cli.wpm;
-            read_terminal(&file, wpm, &theme)
+            read_terminal(&file, wpm, theme)
         }
     }
 }

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+prefix="${HOME}/.local"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix) prefix="$2"; shift 2 ;;
+    -h|--help)
+      echo "Usage: scripts/uninstall-linux.sh [--prefix PATH]"
+      exit 0
+      ;;
+    *) echo "Unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+bindir="${prefix}/bin"
+appdir="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+iconsroot="${XDG_DATA_HOME:-${HOME}/.local/share}/icons/hicolor"
+icon_sizes=(32 48 128 256 512)
+
+rm -f "${bindir}/supersprinter"
+rm -f "${appdir}/supersprinter.desktop"
+for size in "${icon_sizes[@]}"; do
+  rm -f "${iconsroot}/${size}x${size}/apps/supersprinter.png"
+done
+
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$appdir" >/dev/null 2>&1 || true
+command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache "${iconsroot}" >/dev/null 2>&1 || true
+
+echo "Uninstalled Supersprinter desktop integration from ${prefix} and ~/.local/share."

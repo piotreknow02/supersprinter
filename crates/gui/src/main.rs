@@ -5,6 +5,7 @@
 //! (drag-to-move, double-click zoom, minimize / maximize / close); a ghost
 //! button in the bar toggles fullscreen.
 
+mod assets;
 mod launcher;
 mod reader;
 mod utils;
@@ -59,7 +60,7 @@ fn main() {
         .with_assets(AllAssets)
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
-            let fam: SharedString = match core::resolve_font(&theme) {
+            let fam: SharedString = match core::resolve_font(theme) {
                 Ok(r) => {
                     if r.fell_back && theme.font != FONT {
                         eprintln!(

@@ -43,6 +43,50 @@ cargo run -p supersprinter-gui
 cargo run -p supersprinter-gui -- book.txt 300
 ```
 
+## Releases & packaging
+
+Prebuilt artifacts are published on the
+[GitHub releases page](https://github.com/piotreknow02/supersprinter/releases)
+(checksums in `supersprinter-v<X>-checksums.sha256` / `.md5`). All artifacts
+are **unsigned**: Windows SmartScreen and macOS Gatekeeper will warn on first
+launch (on macOS: right-click → Open once).
+
+| Platform | Artifacts | ffmpeg (video export) |
+|---|---|---|
+| Linux x86_64 / aarch64 | `.deb`, `.rpm`, `.AppImage`, `.tar.gz` | deb/rpm: distro libav* pulled automatically; AppImage: bundled inside |
+| Windows x64 / arm64 | `.msi`, portable `.zip` | bundled (DLLs ship next to the exe) |
+| macOS arm64 / x86_64 | `.dmg` | system dependency: `brew install ffmpeg` |
+
+The `.tar.gz` unpacks at `/` (FHS layout: `usr/bin/supersprinter`, desktop
+entry, hicolor icons, license). For a per-user dev install from a checkout:
+
+```sh
+scripts/install-linux.sh            # --release by default; --debug, --prefix, --no-build exist too
+scripts/uninstall-linux.sh
+```
+
+Packaging scripts (all run from a checkout; they self-verify the produced
+packages):
+
+```sh
+cargo build --release --bin supersprinter-gui
+scripts/package-linux.sh stage     --version 0.1.0   # FHS payload in dist/stage
+scripts/package-linux.sh tarball   --version 0.1.0
+scripts/package-linux.sh deb       --version 0.1.0   # needs dpkg-dev
+scripts/package-linux.sh rpm       --version 0.1.0   # needs rpm-build
+scripts/package-linux.sh appimage  --version 0.1.0   # downloads pinned appimagetool
+scripts/package-macos.sh --version 0.1.0             # macOS only (hdiutil)
+```
+
+Icons are generated from `assets/icon.svg` and committed — run
+`scripts/gen-icons.sh` after changing the icon (needs `rsvg-convert` +
+`icotool`, or python3-gobject + python3 as fallback).
+
+Releases are cut from `main` via the **Release (Manual Main Only)** workflow:
+it validates the input version against `[workspace.package] version`, tags,
+builds all six platform artifacts and attaches them with checksums to the
+GitHub release.
+
 ## Encoder choice
 
 `--ffmpeg-args` (CLI `-f`, GUI "ffmpeg args" field) passes `-key value`
