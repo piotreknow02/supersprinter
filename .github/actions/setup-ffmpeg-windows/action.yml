@@ -1,0 +1,54 @@
+name: Setup FFmpeg (Windows)
+description: >
+  Download a pinned BtbN FFmpeg shared build and export FFMPEG_DIR. On Windows
+  there is no pkg-config and no vcpkg ffmpeg package, so FFMPEG_DIR is the only
+  way ffmpeg-sys-next can find the libraries.
+inputs:
+  arch:
+    description: Windows architecture of the FFmpeg build (x64 or arm64)
+    required: true
+outputs:
+  dir:
+    description: Absolute path of the extracted FFmpeg tree (bin/, lib/, include/)
+    value: ${{ steps.download.outputs.dir }}
+runs:
+  using: composite
+  steps:
+    - name: Download pinned FFmpeg shared build
+      id: download
+      shell: pwsh
+      env:
+        ARCH: ${{ inputs.arch }}
+        # Pinned BtbN FFmpeg shared builds (FFmpeg 8.1 series, matching the
+        # libav sonames the Linux packages expect). Immutable autobuild tag.
+        BTBN_TAG: autobuild-2026-11-07-12-47
+      run: |
+        $ErrorActionPreference = "Stop"
+        switch ($env:ARCH) {
+          "x64" {
+            $asset = "ffmpeg-n8.1.3-34-ga35157abb9-win64-gpl-shared-8.1.zip"
+            $sha256 = "d8817d9a554bf4e924c03cb4fb59a0f42175fe85df5d2eab4a8ce66ce208e909"
+          }
+          "arm64" {
+            $asset = "ffmpeg-n8.1.3-34-ga35157abb9-winarm64-gpl-shared-8.1.zip"
+            $sha256 = "e6654a726f7c43c149bd3c958ac052aba80434e59a79e282b0339fbb83bc087c"
+          }
+          default { throw "Unsupported FFmpeg arch '$env:ARCH' (expected x64 or arm64)." }
+        }
+        $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/${env:BTBN_TAG}/$asset"
+        $zip = "ffmpeg-shared.zip"
+        curl.exe -fsSL $url -o $zip
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
+        if ($hash -ne $sha256) {
+          throw "FFmpeg sha256 mismatch: got $hash, expected $sha256"
+        }
+        Expand-Archive -LiteralPath $zip -DestinationPath ffmpeg-build
+        Remove-Item $zip
+        $dir = (Get-ChildItem ffmpeg-build -Directory | Select-Object -First 1).FullName
+        foreach ($sub in @("bin", "lib", "include")) {
+          if (!(Test-Path (Join-Path $dir $sub))) {
+            throw "FFmpeg tree '$dir' has no '$sub' directory."
+          }
+        }
+        "FFMPEG_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append
+        "dir=$dir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
