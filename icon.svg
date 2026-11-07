@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Supersprinter: RSVP pivot marker (▼) pointing at the word slot (_) -->
+  <!-- Default theme: background #101014, text #e6e6e6, arrows/pivot #ff5f56 -->
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="#101014" stroke="#ff5f56" stroke-width="8"/>
+  <path d="M196 172 H316 L256 258 Z" fill="#ff5f56"/>
+  <rect x="166" y="298" width="180" height="30" rx="15" fill="#e6e6e6"/>
+</svg>
